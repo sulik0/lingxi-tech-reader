@@ -1,0 +1,21 @@
+export type Article = {id:string;title:string;source:string;author:string;time:string;content:string;url?:string;score?:number;metrics?:number[];hype?:string;duplicate?:number;reason?:string;extra?:string;flags?:string[]};
+export type Fact = {text:string;status:'已核验'|'来源一致'|'待核验';sources:string[];evidence:string};
+export type EventItem = {id:string;title:string;category:string;tag:string;time:string;minutes:number;color:string;summary:string;points:string[];facts:Fact[];opinions:{author:string;source:string;view:string;basis:string}[];articles:Article[];conclusion:string;uncertainty:string;demo:boolean;pending?:boolean};
+const names=['模型观察室','技术手记','科技速递','AI 前沿站','未来研究所','产品沉思录'];
+export const sources=names.map((name,i)=>({id:String(i),name,desc:['模型测评与技术解读','一手实践与深度分析','科技新闻与行业动态','人工智能产品观察','前沿研究与产业趋势','产品体验与商业观察'][i],initial:['M','技','科','AI','未','产'][i],color:['#5773bd','#35896e','#cd9340','#9259a4','#477887','#cc6c58'][i],enabled:true}));
+function articles(topic:string,kind:number):Article[]{return [
+{id:`${kind}-1`,title:`${topic}：技术细节、真实变化与能力边界`,source:names[1],author:'林远',time:'09:42',content:'这是一篇用于演示的文章。围绕发布说明拆解技术变化，比较产品能力，并标记尚未验证的部分。',score:92,metrics:[94,91,96,87],hype:'低',duplicate:12,reason:'引用一手发布说明，区分实际能力与推断，补充了其他文章没有的使用限制。',extra:'补充上下文限制、部署成本与评测条件',flags:[]},
+{id:`${kind}-2`,title:`如何理解${topic}？一次理性的技术拆解`,source:names[0],author:'陈墨',time:'10:15',content:'演示文章：从模型架构与用户体验出发分析，同时指出公开评测与真实任务之间存在差距。',score:86,metrics:[88,82,90,84],hype:'低',duplicate:24,reason:'包含独立分析与对比，但部分结论依赖作者的经验推断。',extra:'独立分析实际使用场景',flags:[]},
+{id:`${kind}-3`,title:`${topic}正式亮相，这些信息值得关注`,source:names[2],author:'科技速递编辑部',time:'10:38',content:'演示文章：整理发布会消息与公开参数。与同主题的其他报道高度相似。',score:61,metrics:[70,35,91,42],hype:'低',duplicate:82,reason:'事实表述清晰，但与已有报道重复较多，缺少新的信息。',extra:'整理发布参数，无独立信息增量',flags:[]},
+{id:`${kind}-4`,title:`重磅！${topic}，行业格局彻底改写？`,source:names[3],author:'前沿编辑',time:'11:06',content:'演示文章：将一次产品发布描述为颠覆性突破，预测将全面改变市场。',score:41,metrics:[49,28,53,32],hype:'高',duplicate:89,reason:'标题与结论超出可验证证据；大部分正文重复发布信息。',extra:'信息增量较少，包含未经验证的行业预测',flags:['“行业格局彻底改写”缺少市场数据支撑','由单项评测推断全面领先，超出证据范围']}
+];}
+function item(id:string,title:string,category:string,tag:string,color:string,summary:string,points:string[],kind:number):EventItem {const a=articles(title.split('：')[0],kind);return {id,title,category,tag,color,time:['32 分钟前','1 小时前','2 小时前','3 小时前','5 小时前','昨天'][kind-1],minutes:kind===1?3:2,summary,points,articles:a,facts:[{text:points[0],status:'已核验',sources:[a[0].id,a[2].id],evidence:'演示：文章引用了官方发布说明；正式使用时需核对链接与原文证据。'},{text:points[1],status:'来源一致',sources:[a[0].id,a[1].id,a[2].id],evidence:'三篇示例文章表述一致，但一致性不等于独立核验。'},{text:points[2],status:'待核验',sources:[a[1].id],evidence:'目前仅见于作者描述，缺少可复现的数据或一手来源。'}],opinions:[{author:a[0].author,source:a[0].source,view:'这次更新的价值在于具体任务中的可用性，而非单一榜单的领先。',basis:'依据发布说明与能力边界分析；属于作者判断。'},{author:a[1].author,source:a[1].source,view:'产品易用性和生态配套可能比参数规模更影响实际采用。',basis:'依据过往产品经验推断，尚缺长期使用数据。'},{author:a[3].author,source:a[3].source,view:'这次发布将彻底改变行业竞争格局。',basis:'缺少市场份额、用户采用率等证据支持。'}],conclusion:'如果你只需要了解这次发生了什么，读完这份简报就够了。若要评估实际使用或部署，建议阅读推荐文章中的技术细节与限制。',uncertainty:'公开评测能否在真实场景复现、使用成本与长期表现，仍需独立测试。',demo:true};}
+export const demoEvents:EventItem[]=[
+item('qwen','Qwen 新一代模型发布：推理升级，使用门槛降低','大模型','新模型发布','#edf5ee','新一代 Qwen 模型升级推理与多语言能力，并提供不同规模的部署选择。真正值得关注的是能力边界与使用成本，而不是“全面超越”的标题。',['发布包含多个规模的模型，面向不同部署场景。','推理模式与常规模式面向不同任务需求。','真实业务表现仍需结合具体任务进行验证。'],1),
+item('agent','AI Agent 正在走向工作流，但离完全自主还有多远？','AI 应用','产品观察','#f2eef9','多家团队将 Agent 能力接入工具与工作流。文章关注点不同，但核心问题一致：可靠性、权限边界，以及人应该在哪一步介入。',['工具调用和多步骤任务是本轮产品更新的重点。','不同方案的权限与人工确认机制存在差异。','完全替代人工的说法缺少长期可靠性数据。'],2),
+item('chip','新一代 AI 芯片亮相：算力之外，系统效率才是重点','硬件','行业动态','#eef2f7','新硬件方案把芯片、互联与系统设计一起升级。峰值算力数字很醒目，但总成本和真实工作负载更有参考价值。',['发布方案同时涉及计算、互联与散热设计。','厂商公布的性能提升基于特定工作负载。','实际部署收益需要结合能耗和系统成本评估。'],3),
+item('robot','具身智能的新进展：从演示视频到真实场景','机器人','研究进展','#f8f0e8','机器人演示更流畅了，但是否能稳定完成开放环境任务，仍是需要单独验证的问题。',['公开演示展示了多步骤操作任务。','示例环境与真实部署环境仍存在差异。','成功率与运行时长尚缺独立统计。'],4),
+item('open','开放模型生态更新：开发者有了更多选择','大模型','开源生态','#edf3ec','开放权重与工具链更新降低了试用门槛。使用前仍需要核对许可证、资源需求与适用范围。',['此次更新包含模型权重与配套工具。','不同组件的使用许可证需要分别确认。','低成本部署取决于实际任务和硬件。'],5),
+item('device','端侧 AI 产品更新：离日常使用又近了一步','硬件','产品发布','#f1eee7','新设备强调端侧处理与个人化体验。可用功能、适用设备和后续开放计划，需要分开阅读。',['产品展示了端侧处理相关功能。','部分能力对设备规格和地区有要求。','发布计划不等同于所有功能已可使用。'],6)
+];
+export const categories=['全部','大模型','AI 应用','硬件','机器人'];
