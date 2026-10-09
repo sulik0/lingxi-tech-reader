@@ -16,9 +16,11 @@ export function robotBrief(body:string) {
   const events=parts.slice(1).map(part=>{
     const lines=part.trim().split('\n');
     if(lines[0]==='只有短摘要，未作质量评分')return '只有短摘要的文章：请在完整简报查看链接。';
-    const recommendation=lines.find(line=>line.startsWith('推荐阅读：'));
+    const recommendationIndex=lines.findIndex(line=>line.startsWith('推荐阅读：'));
+    const recommendation=lines[recommendationIndex];
+    const reason=recommendationIndex>=0&&!lines[recommendationIndex+1]?.startsWith('原文：')?lines[recommendationIndex+1]:'';
     const url=lines.find(line=>line.startsWith('原文：'));
-    return [lines[0],lines[1]||'',recommendation||'',url||''].filter(Boolean).join('\n');
+    return [lines[0],lines[1]||'',recommendation||'',reason||'',url||''].filter(Boolean).join('\n');
   });
   return [overview,...events].join('\n\n');
 }

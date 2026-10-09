@@ -143,3 +143,9 @@ test('cloud updater bypass is disabled outside the explicitly configured private
  const request=new Request('https://site.test/api/automation/tick',{method:'POST'});assert.equal((await handleAutomation(request,{...environment,SITES_PRIVATE_AUTOMATION:'1'})).status,401);
  const siteRequest=new Request('https://reader.chatgpt.site/api/automation/tick',{method:'POST'});assert.equal((await handleAutomation(siteRequest,environment)).status,401);DB.close();
 });
+
+test('temporary source outage does not prevent retrying an already frozen email digest',async()=>{
+ const DB=d1(),store=new AutomationStore(DB),environment=env(DB),calls=[];await store.addSource(source);await store.saveSettings({enabled:true,sendTime:'08:00',emailTo:'reader@example.test',channels:{email:true,wecom:false,feishu:false}});
+ await runAutomation({...environment,EMAIL_FROM:undefined},'scheduled',now,mockFetch(calls));const body=(await store.digest('2026-10-09')).body;
+ await runAutomation(environment,'scheduled',now+900000,mockFetch(calls,{feedFails:true}));assert.equal(calls.length,1);assert.equal((await store.digest('2026-10-09')).body,body);assert.equal((await store.deliveries())[0].status,'sent');DB.close();
+});

@@ -31,9 +31,10 @@ export async function runAutomation(env:AutomationEnv,mode:'scheduled'|'collect'
     if(mode==='collect')return {message:`已检查 ${sources.length} 个来源，新增 ${added} 篇文章。`,failures};
     const schedule=beijingSchedule(now,settings.sendTime);
     if(mode==='scheduled'&&!schedule.due)return {message:'已检查订阅，尚未到发送时间。',failures};
-    if(failedSources===sources.length)throw new AutomationError('全部订阅源读取失败，未生成或发送简报。',502);
     const id=mode==='preview'?`preview:${now}`:schedule.date;
-    digest=(await store.digest(id))||{id,date:schedule.date,status:'generating',body:'',error:'',createdAt:now,preview:mode==='preview'};
+    const previous=await store.digest(id);
+    if(failedSources===sources.length&&previous?.status!=='ready')throw new AutomationError('全部订阅源读取失败，未生成或发送简报。',502);
+    digest=previous||{id,date:schedule.date,status:'generating',body:'',error:'',createdAt:now,preview:mode==='preview'};
     if(digest.status!=='ready') {
       digest.status='generating';digest.error='';await store.saveDigest(digest);
       // A preview covers the preceding 24 hours; daily delivery uses fixed, non-overlapping windows.
