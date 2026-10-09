@@ -80,3 +80,13 @@ node --env-file=.dev.vars scripts/verify-sources.mjs --curl
 接口 `GET /api/automation/events` 读取事件，`POST /api/automation/events/:id/split` 修正分组，`POST /api/automation/events/:id/analyze` 重新分析；都要求管理口令，写请求还要求同源。当前只面向单管理员，不新增多用户功能。
 
 线上与本地都使用 db/schema.ts 及 drizzle/ 中的迁移，Sites 从 dist/.openai/drizzle 读取迁移。旧 migrations/ 文件保留为已运行本地版本的历史记录，不继续在其中新增迁移。修改表结构后执行 npm run db:generate，检查生成 SQL，再运行本地迁移与验证。
+
+## Sites 的无人值守入口
+
+只有确认站点仅供所有者访问时，才在平台设置 `SITES_PRIVATE_AUTOMATION=1`。私人站点的访问由 Sites 平台先校验，`POST /api/automation/tick` 供平台云任务执行采集、分析和到时发送，不要求在任务提示中保存管理口令。配置管理和事件读取仍要求口令。这个入口仅在明确启用且域名属于 chatgpt.site 时生效；不得在公开站点启用该变量，也不要把它用于没有平台访问控制的自行部署。
+
+第一次后台执行且尚无设置时，初始化允许域名中的公开试用来源，按北京时间 08:00 启用已配置的飞书渠道。只初始化一次；以后暂停发送、删除来源或修改时间不会被后台覆盖。密钥仍由平台 Secrets 提供。
+
+云任务每次运行：读取当前私人站点支持的服务访问凭据；向站点上述入口发送 POST，并只向该站点发送 `OAI-Sites-Authorization: Bearer <服务凭据>`；记录接口结果，并读回 collection_runs、reading_events 和 digest_deliveries 确认数据库状态。凭据不得写入任务提示、仓库或日志。不重新发布源码，不绕过用户暂停，不盲目重发状态不明的机器人消息。
+
+云任务创建成功只表示定时安排已保存；必须另查执行记录。若平台访问返回 Cloudflare 403，应先解决站点入口或托管平台服务访问问题，不能称为无人值守验收通过。

@@ -13,6 +13,10 @@ async function authorized(request:Request,token:string) {
 export async function handleAutomation(request:Request,env:AutomationEnv) {
   const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{'Cache-Control':'private, no-store'}});
   try{
+    // Sites dispatch authenticates this owner-private service endpoint before the Worker.
+    // Keep the flag disabled on any deployment without that platform boundary.
+    const incomingURL=new URL(request.url);
+    if(incomingURL.pathname==='/api/automation/tick'&&request.method==='POST'&&env.SITES_PRIVATE_AUTOMATION==='1'&&incomingURL.hostname.endsWith('.chatgpt.site'))return json(await runAutomation(env,'scheduled'));
     if(!env.DB||!env.AUTOMATION_TOKEN||env.AUTOMATION_TOKEN.length<24)throw new AutomationError('自动订阅尚未配置。请先设置后台数据库和至少 24 位的管理口令。',503);
     if(!await authorized(request,env.AUTOMATION_TOKEN))throw new AutomationError('请输入正确的管理口令。',401);
     const url=new URL(request.url);const path=url.pathname.replace('/api/automation','');

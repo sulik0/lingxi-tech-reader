@@ -1,14 +1,23 @@
 import { AutomationStore } from './store.ts';
+import { hash, feedURL } from './feeds.ts';
 import { fetchFeed } from './feeds.ts';
 import { processEvents, renderEvents } from './events.ts';
 import { channelReady, deliveryPayload, sendDelivery, DeliveryError } from './delivery.ts';
-import { beijingSchedule, AutomationError, type AutomationEnv, type Channel, type Digest } from './types.ts';
+import { beijingSchedule, AutomationError, type AutomationEnv, type Channel, type Digest, suggestedFeeds } from './types.ts';
 export async function runAutomation(env:AutomationEnv,mode:'scheduled'|'collect'|'preview'='scheduled',now=Date.now(),fetcher:typeof fetch=fetch) {
   if(!env.DB)throw new AutomationError('后台数据库尚未配置。',503);
-  const store=new AutomationStore(env.DB);const settings=await store.settings();
+  const store=new AutomationStore(env.DB);let settings=await store.settings();
   const lock=await store.acquire(now);if(!lock)return {message:'已有任务在运行，请稍后查看结果。'};
   let digest:Digest|undefined;
   try {
+    // Enable this only for the verified owner-private Sites deployment.
+    if(env.SITES_PRIVATE_AUTOMATION==='1'&&!await store.db.prepare('SELECT id FROM automation_settings WHERE id=1').first()) {
+      settings={enabled:channelReady(env).feishu,sendTime:'08:00',emailTo:'',channels:{email:false,wecom:false,feishu:channelReady(env).feishu}};
+      const current=await store.sources();
+      const initial=[];
+      for(const feed of suggestedFeeds){try{const url=feedURL(feed.url,env.FEED_ALLOWED_HOSTS||'');if(!current.some(s=>s.url===url))initial.push({...feed,url,id:await hash(url)});}catch{}}
+      await store.db.batch([store.db.prepare('INSERT OR IGNORE INTO automation_settings(id,value) VALUES(1,?)').bind(JSON.stringify(settings)),...initial.map(s=>store.db.prepare('INSERT OR IGNORE INTO feed_sources(id,name,url,enabled) VALUES(?,?,?,1)').bind(s.id,s.name,s.url))]);
+    }
     const sources=(await store.sources()).filter(s=>s.enabled);
     if(!sources.length){if(mode==='scheduled')return {message:'没有启用的订阅源。'};throw new AutomationError('请先添加并启用至少一个订阅源。');}
     let added=0;const failures:string[]=[];

@@ -132,3 +132,14 @@ test('Sites migration initializes an empty database and preserves existing local
  sql.prepare('INSERT INTO automation_settings(id,value) VALUES(1,?)').run(JSON.stringify(defaultSettings));
  sql.exec(readFileSync(new URL('../drizzle/0000_clean_beast.sql',import.meta.url),'utf8'));assert.equal(sql.prepare('SELECT count(*) AS count FROM automation_settings').get().count,1);sql.close();
 });
+test('private Sites bootstrap persists chosen sources once and respects a later pause',async()=>{
+ const DB=d1(),store=new AutomationStore(DB);const environment={...env(DB),SITES_PRIVATE_AUTOMATION:'1',FEED_ALLOWED_HOSTS:'www.geekpark.net,www.ithome.com'};
+ const fetcher=async(url,init)=>String(url).includes('geekpark.net')||String(url).includes('ithome.com')?new Response('<rss><channel/></rss>'):mockFetch([])(url,init);
+ await runAutomation(environment,'collect',now,fetcher);assert.equal((await store.sources()).length,2);assert.equal((await store.settings()).channels.feishu,true);
+ await store.saveSettings(defaultSettings);await runAutomation(environment,'collect',now+900000,fetcher);assert.equal((await store.settings()).enabled,false);assert.equal((await store.sources()).length,2);DB.close();
+});
+test('cloud updater bypass is disabled outside the explicitly configured private Sites boundary',async()=>{
+ const DB=d1(),environment=env(DB);
+ const request=new Request('https://site.test/api/automation/tick',{method:'POST'});assert.equal((await handleAutomation(request,{...environment,SITES_PRIVATE_AUTOMATION:'1'})).status,401);
+ const siteRequest=new Request('https://reader.chatgpt.site/api/automation/tick',{method:'POST'});assert.equal((await handleAutomation(siteRequest,environment)).status,401);DB.close();
+});

@@ -2,6 +2,7 @@ import type { AnalysisEnv } from '../analyze';
 export type Channel = 'email' | 'wecom' | 'feishu';
 export type AutomationEnv = AnalysisEnv & {
   DB?: D1Database;
+  SITES_PRIVATE_AUTOMATION?: string;
   AUTOMATION_TOKEN?: string;
   FEED_ALLOWED_HOSTS?: string;
   RESEND_API_KEY?: string;
