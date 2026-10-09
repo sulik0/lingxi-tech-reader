@@ -46,7 +46,8 @@ export async function sendDelivery(channel:Channel,payload:Record<string,unknown
   let data=payload;
   if(channel==='feishu'&&env.FEISHU_SIGNING_SECRET){const timestamp=String(Math.floor(now/1000));data={...payload,timestamp,sign:await feishuSignature(timestamp,env.FEISHU_SIGNING_SECRET)};}
   let response:Response;
-  try{response=await fetcher(endpoint,{method:'POST',redirect:'error',headers,body:JSON.stringify(data),signal:AbortSignal.timeout(15000)});}catch{throw new DeliveryError('发送超时或连接中断，无法确认是否已送达。',true);}
+  try{response=await fetcher(endpoint,{method:'POST',redirect:'manual',headers,body:JSON.stringify(data),signal:AbortSignal.timeout(15000)});}catch{throw new DeliveryError('发送超时或连接中断，无法确认是否已送达。',true);}
+  if(response.status>=300&&response.status<400)throw new DeliveryError(`发送服务返回 HTTP ${response.status} 重定向，未向新地址发送；请检查渠道配置。`,true);
   if(!response.ok)throw new DeliveryError(`发送服务返回 HTTP ${response.status}。`,response.status>=500);
   try{const result=JSON.parse(await readLimited(response,16000));if(channel==='email'){if(typeof result.id!=='string')throw new DeliveryError('邮件服务响应不完整，无法确认是否接收。',true);}else{const code=channel==='wecom'?result.errcode:result.code??result.StatusCode;if(code!==0)throw new DeliveryError('机器人拒绝了消息，请检查关键词、签名或机器人权限。');}}catch(e){if(e instanceof DeliveryError)throw e;throw new DeliveryError('发送响应无法解析，无法确认是否送达。',true);}
 }

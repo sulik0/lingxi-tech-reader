@@ -58,7 +58,9 @@ export async function readLimited(response:Response,max:number) {
 export async function fetchFeed(source:FeedSource,hosts:string,now:number,fetcher:typeof fetch=fetch) {
   const url=feedURL(source.url,hosts);
   let response:Response;
-  try {response=await fetcher(url,{redirect:'error',signal:AbortSignal.timeout(15000),headers:{Accept:'application/rss+xml, application/atom+xml, application/xml, text/xml','User-Agent':'LingxiReader/0.1'}});}catch(error){throw new AutomationError(`订阅读取失败：${transportError(error)}。请检查网络、证书和最终 HTTPS 地址。`);}
+  // Workerd supports manual/follow only; inspect redirects before parsing.
+  try {response=await fetcher(url,{redirect:'manual',signal:AbortSignal.timeout(15000),headers:{Accept:'application/rss+xml, application/atom+xml, application/xml, text/xml','User-Agent':'LingxiReader/0.1'}});}catch(error){throw new AutomationError(`订阅读取失败：${transportError(error)}。请检查网络、证书和最终 HTTPS 地址。`);}
+  if(response.status>=300&&response.status<400)throw new AutomationError(`订阅返回 HTTP ${response.status} 重定向；请将来源改为最终 HTTPS 地址并检查允许域名。`);
   if(!response.ok)throw new AutomationError(`订阅返回 HTTP ${response.status}。`);
   return parseFeed(await readLimited(response,2000000),source,now);
 }

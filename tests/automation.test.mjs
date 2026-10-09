@@ -48,6 +48,23 @@ test('feed transport errors retain runtime reasons and redact URLs and credentia
   });
   await assert.rejects(fetchFeed(source,'feed.example',now,async()=>{throw new DOMException('deadline exceeded','TimeoutError')}),/TimeoutError/);
 });
+test('Worker-compatible feed requests never follow redirects outside the allowed source',async()=>{
+  const calls=[];
+  const fetcher=async(url,init)=>{assert.equal(init.redirect,'manual');calls.push(url);return new Response('',{status:302,headers:{Location:'https://not-allowed.example/rss'}});};
+  await assert.rejects(fetchFeed(source,'feed.example',now,fetcher),/HTTP 302 重定向/);
+  assert.deepEqual(calls,[source.url]);
+  const articles=await fetchFeed(source,'feed.example',now,async(url,init)=>{assert.equal(init.redirect,'manual');return new Response(rss());});
+  assert.equal(articles.length,1);
+});
+test('delivery uses Worker-compatible manual redirects and never forwards credentials or payload',async()=>{
+  for(const channel of ['email','wecom','feishu']){
+    let calls=0;
+    await assert.rejects(sendDelivery(channel,{text:'自编正文'},'test',env(),async(url,init)=>{
+      calls++;assert.equal(init.redirect,'manual');return new Response('',{status:307,headers:{Location:'https://not-allowed.example/send'}});
+    }),e=>{assert.match(e.message,/重定向/);assert.equal(e.uncertain,true);return true;});
+    assert.equal(calls,1);
+  }
+});
 test('Beijing send time has fixed daily windows, and invalid settings are rejected',()=>{
   const schedule=beijingSchedule(now,'08:00');assert.equal(schedule.date,'2026-10-09');assert.equal(schedule.cutoff,Date.parse('2026-10-09T08:00:00+08:00'));assert.equal(schedule.due,true);assert.equal(beijingSchedule(now,'09:00').due,false);
   assert.throws(()=>validateSettings({...defaultSettings,sendTime:'08:07'}));assert.throws(()=>validateSettings({...defaultSettings,enabled:true}));assert.throws(()=>validateSettings({...defaultSettings,channels:{email:true,wecom:false,feishu:false}}));
