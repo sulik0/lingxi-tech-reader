@@ -44,6 +44,6 @@ curl -s http://localhost:5173/api/status
 
 三个变量都非空时返回 `{"configured":true,"collectionConnected":false}`。这只说明变量齐全，没有检查密钥是否有效、模型是否支持 JSON mode 或服务是否可访问。界面当前把这个状态显示为“已连接”；真正能否调用，需要用自己获准处理的文章完成一次分析。配置变更后刷新页面，状态接口只在页面初次加载时读取。
 
-`collectionConnected` 始终为 `false`。添加公众号名称不会建立采集连接，目前也没有用于启用采集的环境变量。
+这个旧状态接口的 `collectionConnected` 仍为 `false`，不表示独立后台任务的运行状态。自动订阅的实际来源状态、最近读取时间和错误请在“订阅管理 → 自动订阅与每日推送”查看，配置见[自动订阅与推送](automation.md)。
 
 生产环境和构建后本地预览如何配置变量，见[构建与部署](deployment.md)。

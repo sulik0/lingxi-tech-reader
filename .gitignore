@@ -49,3 +49,6 @@ next-env.d.ts
 .dev.vars*
 !.env.example
 *.tsbuildinfo
+
+# Editor workspace preferences
+/.idea/

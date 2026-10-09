@@ -1,3 +1,4 @@
+import { cpSync, mkdirSync } from "node:fs";
 import vinext from "vinext";
 import { defineConfig } from "vite";
 import hostingConfig from "./.openai/hosting.json";
@@ -17,12 +18,14 @@ const managedLinux = readExecutionProfile() === "managed-linux";
 const localBindingConfig = {
   main: "./build/sites-worker.ts",
   compatibility_flags: ["nodejs_compat"],
+  triggers: { crons: ["*/15 * * * *"] },
   d1_databases: d1
     ? [
         {
           binding: d1,
-          database_name: "site-creator-d1",
-          database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
+          database_name: "lingxi-automation",
+          migrations_dir: "migrations",
+          database_id: process.env.LINGXI_D1_DATABASE_ID || SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
         },
       ]
     : [],
@@ -61,6 +64,16 @@ export default defineConfig(async ({ command }) => {
         : {}),
     },
     plugins: [
+      {
+        name: "lingxi-automation-migrations",
+        apply: "build",
+        closeBundle() {
+          if (this.environment.name === "rsc") {
+            mkdirSync("dist/server/migrations", { recursive: true });
+            cpSync("migrations", "dist/server/migrations", { recursive: true });
+          }
+        },
+      },
       vinext(),
       sites({ mockAuth: !managedLinux }),
       connectorPreview(),
