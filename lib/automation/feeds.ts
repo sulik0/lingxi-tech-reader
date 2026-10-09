@@ -58,7 +58,19 @@ export async function readLimited(response:Response,max:number) {
 export async function fetchFeed(source:FeedSource,hosts:string,now:number,fetcher:typeof fetch=fetch) {
   const url=feedURL(source.url,hosts);
   let response:Response;
-  try {response=await fetcher(url,{redirect:'error',signal:AbortSignal.timeout(15000),headers:{Accept:'application/rss+xml, application/atom+xml, application/xml, text/xml','User-Agent':'LingxiReader/0.1'}});}catch{throw new AutomationError('订阅读取失败或超时，请检查地址是否可访问；重定向地址需要改成最终 HTTPS 地址。');}
+  try {response=await fetcher(url,{redirect:'error',signal:AbortSignal.timeout(15000),headers:{Accept:'application/rss+xml, application/atom+xml, application/xml, text/xml','User-Agent':'LingxiReader/0.1'}});}catch(error){throw new AutomationError(`订阅读取失败：${transportError(error)}。请检查网络、证书和最终 HTTPS 地址。`);}
   if(!response.ok)throw new AutomationError(`订阅返回 HTTP ${response.status}。`);
   return parseFeed(await readLimited(response,2000000),source,now);
+}
+// Keep runtime diagnostics useful without retaining URLs or credentials in D1.
+function transportError(error:unknown):string {
+  if(!(error instanceof Error))return '网络请求异常';
+  const name=['Error','TypeError','AbortError','TimeoutError'].includes(error.name)?error.name:'Error';
+  const cause=error.cause instanceof Error?error.cause.message:'';
+  const message=[error.message,cause].filter(Boolean).join(' / ')
+    .replace(/https?:\/\/[^\s<>"']+/gi,'[地址已隐藏]')
+    .replace(/\b(?:sk-|Bearer\s+)[\w.-]+/gi,'[凭据已隐藏]')
+    .replace(/[A-Za-z0-9_-]{24,}/g,'[长标识已隐藏]')
+    .replace(/[\r\n\t]/g,' ').slice(0,180);
+  return `${name}${message?': '+message:''}`;
 }

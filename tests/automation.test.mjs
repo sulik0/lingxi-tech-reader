@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
-import {parseFeed,feedURL,hash} from '../lib/automation/feeds.ts';
+import {parseFeed,feedURL,fetchFeed,hash} from '../lib/automation/feeds.ts';
 import {beijingSchedule,validateSettings,defaultSettings} from '../lib/automation/types.ts';
 import {AutomationStore} from '../lib/automation/store.ts';
 import {validateGroups} from '../lib/automation/digest.ts';
@@ -39,6 +39,14 @@ test('RSS/Atom parsing strips HTML and excludes old articles without storing unk
 test('feed requests require an explicit allowed HTTPS hostname',()=>{
   assert.equal(feedURL(source.url,'feed.example'),source.url);
   for(const url of ['http://feed.example/rss','https://evil.example/rss','https://127.0.0.1/rss','https://user:pass@feed.example/rss','https://feed.example:8443/rss'])assert.throws(()=>feedURL(url,'feed.example,127.0.0.1'));
+});
+test('feed transport errors retain runtime reasons and redact URLs and credentials',async()=>{
+  const error=new TypeError('fetch failed https://feed.example/rss?token=secret-value',{cause:new Error('certificate verify failed sk-fakekey')});
+  await assert.rejects(fetchFeed(source,'feed.example',now,async()=>{throw error}),e=>{
+    assert.match(e.message,/TypeError: fetch failed/);assert.match(e.message,/certificate verify failed/);
+    assert.doesNotMatch(e.message,/secret-value|feed\.example|sk-fakekey/);return true;
+  });
+  await assert.rejects(fetchFeed(source,'feed.example',now,async()=>{throw new DOMException('deadline exceeded','TimeoutError')}),/TimeoutError/);
 });
 test('Beijing send time has fixed daily windows, and invalid settings are rejected',()=>{
   const schedule=beijingSchedule(now,'08:00');assert.equal(schedule.date,'2026-10-09');assert.equal(schedule.cutoff,Date.parse('2026-10-09T08:00:00+08:00'));assert.equal(schedule.due,true);assert.equal(beijingSchedule(now,'09:00').due,false);
