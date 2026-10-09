@@ -14,9 +14,9 @@ export type FeedSource = {id:string;name:string;url:string;enabled:boolean;lastC
 export type Settings = {enabled:boolean;sendTime:string;emailTo:string;channels:Record<Channel,boolean>};
 export const defaultSettings:Settings = {enabled:false,sendTime:'08:00',emailTo:'',channels:{email:false,wecom:false,feishu:false}};
 export const suggestedFeeds = [
-  {name:'量子位（网站 RSS）',url:'https://www.qbitai.com/feed'},
+  {name:'IT之家（网站 RSS）',url:'https://www.ithome.com/rss/'},
   {name:'极客公园（网站 RSS）',url:'https://www.geekpark.net/rss'},
-  {name:'宝玉的分享（博客 RSS）',url:'https://baoyu.io/feed.xml'},
+  {name:'宝玉的分享（博客 RSS）',url:'https://s.baoyu.io/feed.xml'},
 ];
 export type CollectedArticle = {id:string;source:string;title:string;author:string;content:string;url:string;publishedAt:number;collectedAt:number;contentHash:string};
 export type Digest = {id:string;date:string;status:string;body:string;error:string;createdAt:number;preview:boolean};

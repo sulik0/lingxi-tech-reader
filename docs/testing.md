@@ -40,10 +40,16 @@ npm run build
 4. 在设置中隐藏演示内容、导出 JSON，再导出一个事件的 Markdown 简报，确认内容和来源对应。
 5. 涉及弹窗时检查键盘焦点、Escape 关闭和小屏布局。
 
-分析前启用该事件的全部来源；当前来源筛选的实现限制见[已知实现限制](implementation.md#已知实现限制)。不要把真实正文、浏览器导出的 JSON 或模型密钥放进测试夹具和 Git 提交。
+分析和拆分应始终保留完整事件；当前其他限制见[已知实现限制](implementation.md#已知实现限制)。不要把真实正文、浏览器导出的 JSON 或模型密钥放进测试夹具和 Git 提交。
 
 ## GitHub Actions
 
 `.github/workflows/ci.yml` 在推送 `main` 和创建或更新 PR 时执行。它使用 Node.js 24，依次运行 `npm run install:ci`、`npm run typecheck`、`npm test` 和 `npm run build`。整个任务最多运行 15 分钟，同一分支的新运行会取消较旧的运行。
 
 检查结果见仓库的 [Actions 页面](https://github.com/sulik0/lingxi-tech-reader/actions)。本地修改完成后，按 [AGENTS.md](../AGENTS.md)检查差异、提交并推送；工作流成功不代表站点已经部署或真实模型已接通。
+
+## 真实来源和模型验证
+
+执行[自动订阅](automation.md#部署和验收)中的验收脚本。它将真实正文、SQLite 和事件写入忽略的 work 目录，并报告来源成功、失败、重复入库、模型配置和成功分析数。无凭据不输出假分析。curl 路径只能证明本机网络，不代替 Worker 验收。
+
+真实聚类质量需要人工标注案例后重新运行；结构校验通过不代表聚类或推荐准确。回归案例使用方法见[质量验证](quality.md)。

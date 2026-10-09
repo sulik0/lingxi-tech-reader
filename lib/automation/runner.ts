@@ -1,6 +1,6 @@
 import { AutomationStore } from './store.ts';
 import { fetchFeed } from './feeds.ts';
-import { buildDigest } from './digest.ts';
+import { processEvents, renderEvents } from './events.ts';
 import { channelReady, deliveryPayload, sendDelivery, DeliveryError } from './delivery.ts';
 import { beijingSchedule, AutomationError, type AutomationEnv, type Channel, type Digest } from './types.ts';
 export async function runAutomation(env:AutomationEnv,mode:'scheduled'|'collect'|'preview'='scheduled',now=Date.now(),fetcher:typeof fetch=fetch) {
@@ -13,20 +13,29 @@ export async function runAutomation(env:AutomationEnv,mode:'scheduled'|'collect'
     if(!sources.length){if(mode==='scheduled')return {message:'没有启用的订阅源。'};throw new AutomationError('请先添加并启用至少一个订阅源。');}
     let added=0;const failures:string[]=[];
     for(const source of sources){try{const articles=await fetchFeed(source,env.FEED_ALLOWED_HOSTS||'',now,fetcher);added+=await store.addArticles(source.id,articles);await store.sourceResult(source.id,now,'');}catch(e){const error=e instanceof AutomationError?e.message:'读取订阅失败，请稍后重试。';failures.push(`${source.name}：${error}`);await store.sourceResult(source.id,now,error);}}
+    const failedSources=failures.length;
+    try{const errors=await processEvents(store,env,now,fetcher);if(errors?.length)failures.push(...errors.map(e=>'事件分析：'+e));}catch(e){failures.push('事件分析：'+(e instanceof Error?e.message:'分析失败，文章仍保留。'));}
+    await store.collectionRun(now,added,failures);
     // Retention also runs when delivery is paused.
-    await store.db.batch([store.db.prepare('DELETE FROM feed_articles WHERE collected_at<?').bind(now-14*86400000),store.db.prepare('DELETE FROM daily_digests WHERE preview=1 AND created_at<?').bind(now-7*86400000)]);
+    await store.db.batch([store.db.prepare('DELETE FROM feed_articles WHERE collected_at<? AND id IN (SELECT article_id FROM digest_articles)').bind(now-14*86400000),store.db.prepare('DELETE FROM daily_digests WHERE preview=1 AND created_at<?').bind(now-7*86400000)]);
     if(mode==='scheduled'&&!settings.enabled)return {message:'已检查订阅，每日推送未启用。',failures};
     if(mode==='collect')return {message:`已检查 ${sources.length} 个来源，新增 ${added} 篇文章。`,failures};
     const schedule=beijingSchedule(now,settings.sendTime);
     if(mode==='scheduled'&&!schedule.due)return {message:'已检查订阅，尚未到发送时间。',failures};
-    if(failures.length===sources.length)throw new AutomationError('全部订阅源读取失败，未生成或发送简报。',502);
+    if(failedSources===sources.length)throw new AutomationError('全部订阅源读取失败，未生成或发送简报。',502);
     const id=mode==='preview'?`preview:${now}`:schedule.date;
     digest=(await store.digest(id))||{id,date:schedule.date,status:'generating',body:'',error:'',createdAt:now,preview:mode==='preview'};
     if(digest.status!=='ready') {
       digest.status='generating';digest.error='';await store.saveDigest(digest);
       // A preview covers the preceding 24 hours; daily delivery uses fixed, non-overlapping windows.
-      const articles=await store.articles(mode==='preview'?now-86400000:schedule.start,mode==='preview'?now:schedule.cutoff);
-      digest.body=await buildDigest(schedule.date,articles,env,failures,fetcher);digest.status='ready';await store.saveDigest(digest);
+      const articles=mode==='preview'?await store.articles(now-86400000,now):await store.pendingArticles(schedule.cutoff,241);
+      const ids=new Set(articles.slice(0,24).map(a=>a.id));
+      const events=(await store.events()).filter(e=>e.articles.some(a=>ids.has(a.id)));
+      if(articles.slice(0,24).some(a=>a.content.length>=80&&!events.some(e=>!e.pending&&e.articles.some(b=>b.id===a.id))))throw new AutomationError('还有文章等待成功分析，未发送不完整的简报；后续任务会继续处理。',503);
+      digest.body=renderEvents(schedule.date,events,failures,articles.length>24);digest.status='ready';
+      if(mode==='preview')await store.saveDigest(digest);
+      else await store.commitDaily(digest,[...new Set(events.flatMap(e=>e.articles.map(a=>a.id)))]);
+
     }
     if(mode==='preview')return {message:'预览已生成，没有发送到任何渠道。'};
     const ready=channelReady(env);

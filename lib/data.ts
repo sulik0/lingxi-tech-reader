@@ -1,6 +1,6 @@
-export type Article = {id:string;title:string;source:string;author:string;time:string;content:string;url?:string;score?:number;metrics?:number[];hype?:string;duplicate?:number;reason?:string;extra?:string;flags?:string[]};
+export type Article = {id:string;publishedAt?:number;title:string;source:string;author:string;time:string;content:string;url?:string;score?:number;metrics?:number[];hype?:string;duplicate?:number;reason?:string;extra?:string;flags?:string[]};
 export type Fact = {text:string;status:'已核验'|'来源一致'|'待核验';sources:string[];evidence:string};
-export type EventItem = {id:string;title:string;category:string;tag:string;time:string;minutes:number;color:string;summary:string;points:string[];facts:Fact[];opinions:{author:string;source:string;view:string;basis:string}[];articles:Article[];conclusion:string;uncertainty:string;demo:boolean;pending?:boolean};
+export type EventItem = {id:string;updatedAt?:number;automatic?:boolean;groupingLocked?:boolean;recommendedArticleId?:string;title:string;category:string;tag:string;time:string;minutes:number;color:string;summary:string;points:string[];facts:Fact[];opinions:{author:string;source:string;view:string;basis:string}[];articles:Article[];conclusion:string;uncertainty:string;demo:boolean;pending?:boolean};
 const names=['模型观察室','技术手记','科技速递','AI 前沿站','未来研究所','产品沉思录'];
 export const sources=names.map((name,i)=>({id:String(i),name,desc:['模型测评与技术解读','一手实践与深度分析','科技新闻与行业动态','人工智能产品观察','前沿研究与产业趋势','产品体验与商业观察'][i],initial:['M','技','科','AI','未','产'][i],color:['#5773bd','#35896e','#cd9340','#9259a4','#477887','#cc6c58'][i],enabled:true}));
 function articles(topic:string,kind:number):Article[]{return [
@@ -18,4 +18,4 @@ item('robot','具身智能的新进展：从演示视频到真实场景','机器
 item('open','开放模型生态更新：开发者有了更多选择','大模型','开源生态','#edf3ec','开放权重与工具链更新降低了试用门槛。使用前仍需要核对许可证、资源需求与适用范围。',['此次更新包含模型权重与配套工具。','不同组件的使用许可证需要分别确认。','低成本部署取决于实际任务和硬件。'],5),
 item('device','端侧 AI 产品更新：离日常使用又近了一步','硬件','产品发布','#f1eee7','新设备强调端侧处理与个人化体验。可用功能、适用设备和后续开放计划，需要分开阅读。',['产品展示了端侧处理相关功能。','部分能力对设备规格和地区有要求。','发布计划不等同于所有功能已可使用。'],6)
 ];
-export const categories=['全部','大模型','AI 应用','硬件','机器人'];
+export const categories=['全部','科技资讯','大模型','AI 应用','硬件','机器人'];

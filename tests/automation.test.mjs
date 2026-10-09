@@ -6,15 +6,17 @@ import {readFileSync} from 'node:fs';
 import {parseFeed,feedURL,hash} from '../lib/automation/feeds.ts';
 import {beijingSchedule,validateSettings,defaultSettings} from '../lib/automation/types.ts';
 import {AutomationStore} from '../lib/automation/store.ts';
-import {validateGroups,buildDigest} from '../lib/automation/digest.ts';
+import {validateGroups} from '../lib/automation/digest.ts';
 import {deliveryPayload,sendDelivery,feishuSignature,truncateBytes} from '../lib/automation/delivery.ts';
 import {runAutomation} from '../lib/automation/runner.ts';
+import {processEvents,renderEvents} from '../lib/automation/events.ts';
+import {invalidateEvent} from '../lib/event-state.ts';
 import {handleAutomation} from '../lib/automation/api.ts';
 const now=Date.parse('2026-10-09T08:15:00+08:00');
 const content='示例模型新增本地部署功能。'+ '这是自编的测试正文，说明部署方式与尚未验证的数据。'.repeat(5);
 const source={id:'test-source',name:'自编来源',url:'https://feed.example/rss',enabled:true};
 function rss(body=content,date='2026-10-09T07:00:00+08:00'){return `<?xml version="1.0"?><rss version="2.0"><channel><title>Test</title><item><guid>test-article</guid><title>示例模型发布</title><link>https://article.example/a</link><pubDate>${date}</pubDate><description><![CDATA[<p>${body}</p>]]></description></item></channel></rss>`;}
-function d1(){const sql=new DatabaseSync(':memory:');sql.exec(readFileSync(new URL('../migrations/0001_automation.sql',import.meta.url),'utf8'));
+function d1(){const sql=new DatabaseSync(':memory:');for(const file of ['0001_automation.sql','0002_events.sql'])sql.exec(readFileSync(new URL('../migrations/'+file,import.meta.url),'utf8'));
   const wrap=(text,args=[])=>({bind(...params){return wrap(text,params)},async first(){return sql.prepare(text).get(...args)||null},async all(){return {results:sql.prepare(text).all(...args),success:true,meta:{}}},async run(){const r=sql.prepare(text).run(...args);return {results:[],success:true,meta:{changes:Number(r.changes)}}}});
   return {prepare:wrap,async batch(statements){sql.exec('BEGIN');try{const r=[];for(const s of statements)r.push(await s.run());sql.exec('COMMIT');return r;}catch(e){sql.exec('ROLLBACK');throw e;}},close(){sql.close()}};
 }
@@ -51,10 +53,10 @@ test('semantic grouping rejects unknown IDs, duplicates and omitted articles',as
   const articles=await parseFeed(rss(),source,now);assert.equal(validateGroups({groups:[{ids:[articles[0].id]}]},articles).length,1);
   for(const groups of [[{ids:['wrong']}],[{ids:[articles[0].id,articles[0].id]}],[]])assert.throws(()=>validateGroups({groups},articles));
 });
-test('digest removes identical bodies and marks short summaries rather than fabricating analysis',async()=>{
-  const a=(await parseFeed(rss(),source,now))[0];const b={...a,id:'copy',source:'转载来源'};const calls=[];
-  const body=await buildDigest('2026-10-09',[a,b],env(),[],mockFetch(calls));assert.match(body,/排除 1 篇相同正文/);assert.match(body,/推荐阅读/);assert.match(body,/原句/);
-  const short={...a,content:'只有摘要',contentHash:await hash('只有摘要')};const shortBody=await buildDigest('2026-10-09',[short],{},[],async()=>{throw Error('must not call model')});assert.match(shortBody,/只有短摘要，未作质量评分/);
+test('shared events retain copied sources and clear stale analysis on changed membership',async()=>{
+  const DB=d1(),store=new AutomationStore(DB);await store.addSource(source);await store.addArticles(source.id,await parseFeed(rss(),source,now));
+  await processEvents(store,env(DB),now,mockFetch([]));const [event]=await store.events();assert.equal(event.pending,false);assert.match(renderEvents('2026-10-09',[event],[]),/推荐阅读/);
+  const fresh=invalidateEvent(event,event.articles);assert.equal(fresh.pending,true);assert.equal(fresh.facts.length,0);assert.equal(fresh.articles[0].score,undefined);assert.doesNotMatch(fresh.conclusion,/部署要求/);DB.close();
 });
 test('three delivery protocols respect UTF-8 limits, signatures and provider rejection',async()=>{
   const settings={...defaultSettings,emailTo:'reader@example.test'};const long='汉'.repeat(2000);
@@ -93,4 +95,34 @@ test('a channel configured after a failed setup gets a valid payload and retry p
   const DB=d1(),store=new AutomationStore(DB),environment=env(DB),calls=[];await store.addSource(source);await store.saveSettings({enabled:true,sendTime:'08:00',emailTo:'first@example.test',channels:{email:true,wecom:false,feishu:false}});
   await runAutomation({...environment,EMAIL_FROM:undefined},'scheduled',now,mockFetch(calls));assert.equal(calls.length,0);
   await runAutomation(environment,'scheduled',now+900000,mockFetch(calls));assert.equal(calls.length,1);assert.equal(JSON.parse(calls[0].init.body).from,environment.EMAIL_FROM);assert.equal(JSON.parse(calls[0].init.body).to[0],'first@example.test');DB.close();
+});
+
+test('late articles survive daily boundaries, overflow queues and durable seen keys',async()=>{
+  const DB=d1(),store=new AutomationStore(DB);await store.addSource(source);
+  const old=(await parseFeed(rss(content,'2026-10-07T07:00:00+08:00'),source,now))[0];assert.ok(old);
+  await store.addArticles(source.id,[old]);assert.equal((await store.pendingArticles(now+1)).length,1);
+  await store.saveDigest({id:'day',date:'2026-10-09',status:'generating',body:'',error:'',createdAt:now,preview:false});
+  await store.commitDaily({id:'day',body:'frozen'},[old.id]);assert.equal((await store.pendingArticles(now+1)).length,0);
+  await DB.prepare('DELETE FROM feed_articles').run();assert.equal(await store.addArticles(source.id,[old]),0);DB.close();
+});
+test('tracked URL variations and changing GUIDs do not duplicate an article',async()=>{
+  const DB=d1(),store=new AutomationStore(DB);await store.addSource(source);const a=(await parseFeed(rss().replace('/a</link>','/a?utm_source=x</link>'),source,now))[0];assert.equal(a.url,'https://article.example/a');
+  assert.equal(await store.addArticles(source.id,[a]),1);assert.equal(await store.addArticles(source.id,[{...a,id:'changed-guid',contentHash:'changed',content:a.content+'修改'}]),0);DB.close();
+});
+test('events API uses persisted data and splitting clears both groups without losing hidden sources',async()=>{
+  const DB=d1(),store=new AutomationStore(DB),environment=env(DB);await store.addSource(source);const a=(await parseFeed(rss(),source,now))[0];await store.addArticles(source.id,[a]);await processEvents(store,environment,now,mockFetch([]));
+  const [event]=await store.events();event.articles.push({...event.articles[0],id:'second',source:'已暂停来源'});await store.saveEvents([event]);
+  const headers={authorization:'Bearer '+environment.AUTOMATION_TOKEN,origin:'https://site.test','content-type':'application/json'};
+  const response=await handleAutomation(new Request('https://site.test/api/automation/events/'+event.id+'/split',{method:'POST',headers,body:JSON.stringify({articleId:a.id})}),environment);assert.equal(response.status,200);
+  const events=await store.events();assert.equal(events.flatMap(e=>e.articles).length,2);assert.ok(events.every(e=>e.pending&&e.groupingLocked&&!e.facts.length));DB.close();
+});
+test('overflow is retained across days and only unreported articles enter the next daily queue',async()=>{
+  const DB=d1(),store=new AutomationStore(DB),environment=env(DB),calls=[];await store.addSource(source);
+  await store.saveSettings({enabled:true,sendTime:'08:00',emailTo:'',channels:{email:false,wecom:false,feishu:true}});
+  const entries=Array.from({length:25},(_,i)=>`<item><guid>overflow-${i}</guid><title>事件 ${i}</title><link>https://article.example/${i}</link><pubDate>2026-10-09T07:00:00+08:00</pubDate><description><![CDATA[${content} 编号 ${i}]]></description></item>`).join('');
+  const base=mockFetch(calls);const fetcher=async(url,init)=>url===source.url?new Response(`<rss><channel>${entries}</channel></rss>`):base(url,init);
+  for(let i=0;i<5;i++)await runAutomation(environment,'collect',now-3600000+i*900000,fetcher);
+  await runAutomation(environment,'scheduled',now+5*900000,fetcher);assert.equal(calls.length,1);assert.equal((await store.pendingArticles(now+86400000)).length,1);
+  await runAutomation(environment,'scheduled',now+6*900000,fetcher);assert.equal(calls.length,1);
+  await runAutomation(environment,'scheduled',now+86400000,fetcher);assert.equal(calls.length,2);assert.equal((await store.pendingArticles(now+2*86400000)).length,0);DB.close();
 });

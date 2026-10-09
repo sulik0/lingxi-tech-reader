@@ -17,6 +17,11 @@ export function plainText(html:string) {
   return decoded.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi,'').replace(/<\/(p|div|li|h[1-6])>|<br\s*\/?\s*>/gi,'\n').replace(/<[^>]+>/g,'').replace(/[ \t]+/g,' ').replace(/\n\s*\n/g,'\n\n').trim();
 }
 
+export function canonicalArticleURL(value:string) {
+  const u=new URL(value);u.hash='';
+  for(const key of [...u.searchParams.keys()])if(/^utm_/i.test(key)||['spm','from','ref','source','fbclid','gclid'].includes(key.toLowerCase()))u.searchParams.delete(key);
+  u.searchParams.sort();return u.href;
+}
 function str(x:unknown):string {if(typeof x==='string'||typeof x==='number')return String(x);if(x&&typeof x==='object'&&'#text' in x)return str((x as Record<string,unknown>)['#text']);return '';}
 function list<T>(x:T|T[]|undefined):T[] {return x===undefined?[]:Array.isArray(x)?x:[x];}
 export async function parseFeed(raw:string,source:FeedSource,now:number):Promise<CollectedArticle[]> {
@@ -31,12 +36,12 @@ export async function parseFeed(raw:string,source:FeedSource,now:number):Promise
     const title=plainText(str(item.title)).slice(0,160);
     const links=list(item.link);
     let link=rss?str(item.link):str((links.find((l:any)=>!l['@_rel']||l['@_rel']==='alternate') as any)?.['@_href']);
-    try {const u=new URL(link,source.url);link=['http:','https:'].includes(u.protocol)&&!u.username&&!u.password?u.href:'';} catch {link='';}
+    try {const u=new URL(link,source.url);link=['http:','https:'].includes(u.protocol)&&!u.username&&!u.password?canonicalArticleURL(u.href):'';} catch {link='';}
     const content=plainText(str(item['content:encoded']||item.content||item.description||item.summary)).slice(0,16000);
     if(!title || !content || !link)continue;
     const date=Date.parse(str(item.pubDate||item.published||item.updated));
     const publishedAt=Number.isFinite(date)?date:now;
-    if(publishedAt>now+3600000 || publishedAt<now-48*3600000)continue;
+    if(publishedAt>now+3600000 || publishedAt<now-14*86400000)continue;
     const external=str(item.guid||item.id)||link;
     articles.push({id:await hash(source.id+'\n'+external),source:source.name,title,author:plainText(str(item['dc:creator']||(item.author as any)?.name||item.author))||'未提供',content,url:link,publishedAt,collectedAt:now,contentHash:await hash(content.replace(/\s+/g,''))});
   }

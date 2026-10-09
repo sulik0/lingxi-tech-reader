@@ -30,9 +30,9 @@ cp .env.example .dev.vars
 
 ## 模型服务需要支持什么
 
-服务需要兼容 Chat Completions（聊天补全接口），接受 `messages`、`model`、`temperature`、`max_tokens` 和 `response_format: {type: "json_object"}`，并在 `choices[0].message.content` 中返回 JSON 字符串。当前请求使用 `temperature: 0.2`、`max_tokens: 6500`，没有厂商专用参数或 SDK。
+服务需要兼容 Chat Completions（聊天补全接口），接受 `messages`、`model`、`temperature`、`max_tokens` 和 `response_format: {type: "json_object"}`，并在 `choices[0].message.content` 中返回 JSON 字符串。当前请求使用 `temperature: 0.2`、`max_tokens: 6500`，不依赖厂商 SDK；仅针对 DeepSeek 设置 thinking disabled，详见[自动订阅](automation.md)。
 
-用户点击“交叉分析”时，Worker 才会发送当前请求中的文章 ID、标题、来源、作者和完整正文。链接不参与抓取或外部查证。请求限制和结果格式见[分析接口](implementation.md#分析接口)。
+后台自动处理或用户点击“交叉分析”时，Worker 会发送当前请求中的文章 ID、标题、来源、作者和完整正文。链接不参与抓取或外部查证。请求限制和结果格式见[分析接口](implementation.md#分析接口)。
 
 ## 怎样确认配置生效
 
@@ -42,7 +42,7 @@ cp .env.example .dev.vars
 curl -s http://localhost:5173/api/status
 ```
 
-三个变量都非空时返回 `{"configured":true,"collectionConnected":false}`。这只说明变量齐全，没有检查密钥是否有效、模型是否支持 JSON mode 或服务是否可访问。界面当前把这个状态显示为“已连接”；真正能否调用，需要用自己获准处理的文章完成一次分析。配置变更后刷新页面，状态接口只在页面初次加载时读取。
+三个变量都非空时返回 `{"configured":true,"collectionConnected":false}`。这只说明变量齐全，没有检查密钥是否有效、模型是否支持 JSON mode 或服务是否可访问。界面显示配置已填写；真正能否调用，需要用自己获准处理的文章完成一次分析。配置变更后刷新页面，状态接口只在页面初次加载时读取。
 
 这个旧状态接口的 `collectionConnected` 仍为 `false`，不表示独立后台任务的运行状态。自动订阅的实际来源状态、最近读取时间和错误请在“订阅管理 → 自动订阅与每日推送”查看，配置见[自动订阅与推送](automation.md)。
 
