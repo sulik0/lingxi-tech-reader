@@ -7,7 +7,7 @@ Cloudflare Worker 负责采集、分析和发送，D1 保存来源、文章、�
 | 模块 | 做什么 |
 | --- | --- |
 | `lib/automation/feeds.ts` | 校验来源地址，解析 RSS/Atom，清理正文和跟踪参数。 |
-| `lib/automation/store.ts`、`migrations/` | 保存文章、事件、发送队列、历史记录和任务锁。 |
+| `lib/automation/store.ts`、`db/schema.ts`、`drizzle/` | 保存文章、事件、发送队列、历史记录和任务锁。 |
 | `lib/automation/digest.ts` | 用模型按具体事件分组，检查 ID 是否完整且不重复。 |
 | `lib/automation/events.ts` | 比较新报道和近期事件，分析正文，保存统一事件，并把这些事件排成每日简报。 |
 | `lib/analyze.ts` | 调用模型，检查正文引文、评分与推荐文章 ID；提供八类分析结果。 |
@@ -52,4 +52,4 @@ flowchart TD
 | localStorage | 只用于浏览器阅读偏好、收藏、已读和调试数据。 |
 | Node.js 测试、SQLite、GitHub Actions | 检查实际 SQL、模型结果规则与重复任务行为，并验证构建。 |
 
-业务模块直接使用 D1，初始 Drizzle、R2 和 connector 示例尚未参与正式处理。配置、容量和失败规则见[自动订阅与推送](docs/automation.md)。模型没有联网事实核查能力，多个来源提及仍不等于独立证实。
+业务模块直接使用 D1，Drizzle 管理数据库结构与部署迁移；初始 R2 和 connector 示例尚未参与正式处理。配置、容量和失败规则见[自动订阅与推送](docs/automation.md)。模型没有联网事实核查能力，多个来源提及仍不等于独立证实。

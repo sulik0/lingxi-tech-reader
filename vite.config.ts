@@ -24,7 +24,7 @@ const localBindingConfig = {
         {
           binding: d1,
           database_name: "lingxi-automation",
-          migrations_dir: "migrations",
+          migrations_dir: "drizzle",
           database_id: process.env.LINGXI_D1_DATABASE_ID || SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
         },
       ]
@@ -69,8 +69,8 @@ export default defineConfig(async ({ command }) => {
         apply: "build",
         closeBundle() {
           if (this.environment.name === "rsc") {
-            mkdirSync("dist/server/migrations", { recursive: true });
-            cpSync("migrations", "dist/server/migrations", { recursive: true });
+            mkdirSync("dist/server/drizzle", { recursive: true });
+            cpSync("drizzle", "dist/server/drizzle", { recursive: true });
           }
         },
       },

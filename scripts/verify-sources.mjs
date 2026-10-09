@@ -8,7 +8,7 @@ import {processEvents,renderEvents} from '../lib/automation/events.ts';
 mkdirSync('work/acceptance',{recursive:true});
 const sql=new DatabaseSync('work/acceptance/live.sqlite');
 sql.exec('CREATE TABLE IF NOT EXISTS applied_migrations(name TEXT PRIMARY KEY)');
-for(const file of ['0001_automation.sql','0002_events.sql'])if(!sql.prepare('SELECT name FROM applied_migrations WHERE name=?').get(file)){sql.exec(readFileSync('migrations/'+file,'utf8'));sql.prepare('INSERT INTO applied_migrations VALUES(?)').run(file);}
+for(const file of JSON.parse(readFileSync('drizzle/meta/_journal.json','utf8')).entries.map(e=>e.tag+'.sql'))if(!sql.prepare('SELECT name FROM applied_migrations WHERE name=?').get(file)){sql.exec(readFileSync('drizzle/'+file,'utf8'));sql.prepare('INSERT INTO applied_migrations VALUES(?)').run(file);}
 const wrap=(text,args=[])=>({bind(...values){return wrap(text,values)},async first(){return sql.prepare(text).get(...args)||null},async all(){return {results:sql.prepare(text).all(...args)}},async run(){return {meta:{changes:Number(sql.prepare(text).run(...args).changes)}}}});
 const DB={prepare:wrap,async batch(items){sql.exec('BEGIN');try{const results=[];for(const s of items)results.push(await s.run());sql.exec('COMMIT');return results;}catch(e){sql.exec('ROLLBACK');throw e;}}};
 const store=new AutomationStore(DB),now=Date.now();

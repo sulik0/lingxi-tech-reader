@@ -1,4 +1,13 @@
-// Intentionally empty by default.
-// Add Drizzle tables here when the site actually needs a database.
-// See examples/d1/db/schema.ts for an opt-in example.
-export {};
+import {sqliteTable,text,integer,index,uniqueIndex,primaryKey,check} from 'drizzle-orm/sqlite-core';
+import {sql} from 'drizzle-orm';
+export const settings=sqliteTable('automation_settings',{id:integer().primaryKey(),value:text().notNull()},t=>[check('single_settings',sql`${t.id}=1`)]);
+export const sources=sqliteTable('feed_sources',{id:text().primaryKey(),name:text().notNull(),url:text().notNull().unique(),enabled:integer().notNull().default(1),last_checked:integer(),last_success:integer(),error:text().notNull().default('')});
+export const articles=sqliteTable('feed_articles',{id:text().primaryKey(),source_id:text().notNull(),source:text().notNull(),title:text().notNull(),author:text().notNull(),content:text().notNull(),url:text().notNull(),published_at:integer().notNull(),collected_at:integer().notNull(),content_hash:text().notNull()},t=>[uniqueIndex('feed_articles_source_url').on(t.source_id,t.url),index('feed_articles_time').on(t.published_at)]);
+export const digests=sqliteTable('daily_digests',{id:text().primaryKey(),date:text().notNull(),status:text().notNull(),body:text().notNull().default(''),error:text().notNull().default(''),created_at:integer().notNull(),preview:integer().notNull().default(0)});
+export const deliveries=sqliteTable('digest_deliveries',{digest_id:text().notNull(),channel:text().notNull(),status:text().notNull(),attempts:integer().notNull().default(0),started_at:integer(),error:text().notNull().default(''),payload:text().notNull()},t=>[primaryKey({columns:[t.digest_id,t.channel]})]);
+export const lock=sqliteTable('automation_lock',{id:integer().primaryKey(),holder:text().notNull(),expires_at:integer().notNull()},t=>[check('single_lock',sql`${t.id}=1`)]);
+export const events=sqliteTable('reading_events',{id:text().primaryKey(),value:text().notNull(),updated_at:integer().notNull()},t=>[index('reading_events_time').on(t.updated_at)]);
+export const memberships=sqliteTable('event_articles',{article_id:text().primaryKey(),event_id:text().notNull()});
+export const reported=sqliteTable('digest_articles',{article_id:text().primaryKey(),digest_id:text().notNull()});
+export const runs=sqliteTable('collection_runs',{id:text().primaryKey(),started_at:integer().notNull(),added:integer().notNull(),failures:text().notNull()});
+export const seen=sqliteTable('article_seen',{source_id:text().notNull(),article_id:text().notNull(),url:text().notNull(),content_hash:text().notNull()},t=>[primaryKey({columns:[t.source_id,t.article_id]}),index('article_seen_url').on(t.source_id,t.url),index('article_seen_hash').on(t.source_id,t.content_hash)]);

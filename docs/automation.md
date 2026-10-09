@@ -78,3 +78,5 @@ node --env-file=.dev.vars scripts/verify-sources.mjs --curl
 正文、SQLite、事件和简报仅写入忽略的 `work/acceptance/`。报告区分采集成功和真实分析成功。真实模型、实际飞书送达、线上网络与连续多周期运行分别验收，具体记录见[阶段验收](acceptance.md)。
 
 接口 `GET /api/automation/events` 读取事件，`POST /api/automation/events/:id/split` 修正分组，`POST /api/automation/events/:id/analyze` 重新分析；都要求管理口令，写请求还要求同源。当前只面向单管理员，不新增多用户功能。
+
+线上与本地都使用 db/schema.ts 及 drizzle/ 中的迁移，Sites 从 dist/.openai/drizzle 读取迁移。旧 migrations/ 文件保留为已运行本地版本的历史记录，不继续在其中新增迁移。修改表结构后执行 npm run db:generate，检查生成 SQL，再运行本地迁移与验证。
