@@ -29,7 +29,7 @@ export async function parseFeed(raw:string,source:FeedSource,now:number):Promise
   const xml=new XMLParser({ignoreAttributes:false,parseTagValue:false,processEntities:false}).parse(raw);
   const rss=xml.rss?.channel;
   const atom=xml.feed;
-  if(!rss&&!atom)throw new AutomationError('这个地址没有返回 RSS 或 Atom 订阅内容。');
+  if(rss===undefined&&atom===undefined)throw new AutomationError('这个地址没有返回 RSS 或 Atom 订阅内容。');
   const items=list<Record<string,unknown>>(rss?.item||atom?.entry).slice(0,50);
   const articles:CollectedArticle[]=[];
   for(const item of items) {

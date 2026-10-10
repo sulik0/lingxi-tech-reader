@@ -10,6 +10,7 @@ import {clusterArticles,validateGroups} from '../lib/automation/digest.ts';
 import {robotBrief,deliveryPayload,sendDelivery,feishuSignature,truncateBytes} from '../lib/automation/delivery.ts';
 import {runAutomation} from '../lib/automation/runner.ts';
 import {processEvents,renderEvents} from '../lib/automation/events.ts';
+import {digestLabel,selectHistory} from '../lib/automation/presentation.ts';
 import {invalidateEvent} from '../lib/event-state.ts';
 import {handleAutomation} from '../lib/automation/api.ts';
 const now=Date.parse('2026-10-09T08:15:00+08:00');
@@ -167,7 +168,10 @@ test('overflow is retained across days and only unreported articles enter the ne
 test('Sites migration initializes an empty database and preserves existing local automation data',()=>{
  const sql=new DatabaseSync(':memory:');sql.exec(readFileSync(new URL('../migrations/0001_automation.sql',import.meta.url),'utf8'));sql.exec(readFileSync(new URL('../migrations/0002_events.sql',import.meta.url),'utf8'));
  sql.prepare('INSERT INTO automation_settings(id,value) VALUES(1,?)').run(JSON.stringify(defaultSettings));
- sql.exec(readFileSync(new URL('../drizzle/0000_clean_beast.sql',import.meta.url),'utf8'));assert.equal(sql.prepare('SELECT count(*) AS count FROM automation_settings').get().count,1);sql.close();
+ sql.exec(readFileSync(new URL('../drizzle/0000_clean_beast.sql',import.meta.url),'utf8'));
+ sql.prepare("INSERT INTO daily_digests(id,date,status,body,error,created_at,preview) VALUES('old','2026-10-09','ready','自编历史正文','',1,0)").run();
+ sql.exec(readFileSync(new URL('../drizzle/0001_same_greymalkin.sql',import.meta.url),'utf8'));
+ assert.equal(sql.prepare('SELECT count(*) AS count FROM automation_settings').get().count,1);assert.equal(sql.prepare("SELECT body FROM daily_digests WHERE id='old'").get().body,'自编历史正文');assert.equal(sql.prepare("SELECT details FROM daily_digests WHERE id='old'").get().details,'{}');sql.close();
 });
 test('private Sites bootstrap persists chosen sources once and respects a later pause',async()=>{
  const DB=d1(),store=new AutomationStore(DB);const environment={...env(DB),SITES_PRIVATE_AUTOMATION:'1',FEED_ALLOWED_HOSTS:'www.geekpark.net,www.ithome.com'};
@@ -204,4 +208,58 @@ test('manual reanalysis preserves a useful analysis error instead of a generic s
   await processEvents(store,{},now);const [event]=await store.events();
   const response=await handleAutomation(new Request('https://site.test/api/automation/events/'+event.id+'/analyze',{method:'POST',headers:{Authorization:'Bearer '+env(DB).AUTOMATION_TOKEN,origin:'https://site.test','content-type':'application/json'},body:'{}'}),{...env(DB),LLM_API_KEY:undefined});
   assert.equal(response.status,503);assert.match((await response.json()).message,/AI 服务尚未配置/);assert.equal((await store.events())[0].pending,true);DB.close();
+});
+
+test('empty daily attempts do not send or occupy the day, and this cycle collection is eligible',async()=>{
+  const DB=d1(),store=new AutomationStore(DB),environment=env(DB),calls=[];await store.addSource(source);await store.saveSettings({enabled:true,sendTime:'08:00',emailTo:'',channels:{email:false,wecom:false,feishu:true}});
+  const base=mockFetch(calls);const empty=async(url,init)=>url===source.url?new Response('<rss><channel/></rss>'):base(url,init);
+  const initial=await runAutomation(environment,'scheduled',now,empty);assert.equal(initial.stage,'empty');assert.equal(calls.length,0);assert.equal((await store.digest('2026-10-09')).status,'empty');
+  const generated=await runAutomation(environment,'scheduled',now+900000,base);assert.equal(generated.stage,'sent');assert.equal(calls.length,1);
+  const daily=await store.digest('2026-10-09');assert.equal(daily.details.articleCount,1);assert.match(daily.body,/本次整理 1 条资讯/);
+  const repeat=await runAutomation(environment,'scheduled',now+1800000,base);assert.match(repeat.message,/今日已发送，不会重复发送/);assert.equal(calls.length,1);DB.close();
+});
+test('waiting for analysis is a recoverable state, not a failed preview or a sent empty daily digest',async()=>{
+  const DB=d1(),store=new AutomationStore(DB),environment=env(DB),calls=[];await store.addSource(source);await store.saveSettings({enabled:true,sendTime:'08:00',emailTo:'',channels:{email:false,wecom:false,feishu:true}});
+  const base=mockFetch(calls);const bad=async(url,init)=>url===environment.LLM_BASE_URL+'/chat/completions'?Response.json({choices:[{message:{content:'{}'}}]}):base(url,init);
+  const preview=await runAutomation(environment,'preview',now,bad);assert.equal(preview.stage,'waiting');assert.equal((await store.digest(preview.digestId)).error,'');assert.equal(calls.length,0);
+  const daily=await runAutomation(environment,'scheduled',now+1,bad);assert.equal(daily.stage,'waiting');assert.equal((await store.deliveries()).length,0);assert.equal((await store.pendingArticles(now+2)).length,1);
+  const repaired=await runAutomation(environment,'scheduled',now+900000,base);assert.equal(repaired.stage,'sent');assert.equal(calls.length,1);DB.close();
+});
+test('partial previews and daily digests include only valid analyses and leave failed articles queued',async()=>{
+  const DB=d1(),store=new AutomationStore(DB),environment=env(DB),calls=[];await store.addSource(source);await store.saveSettings({enabled:true,sendTime:'08:00',emailTo:'',channels:{email:false,wecom:false,feishu:true}});
+  const entries=['有效文章','待分析文章'].map((title,i)=>`<item><guid>partial-${i}</guid><title>${title}</title><link>https://article.example/partial-${i}</link><pubDate>2026-10-09T07:00:00+08:00</pubDate><description><![CDATA[${content} 编号 ${i}]]></description></item>`).join('');
+  const base=mockFetch(calls);const fetcher=async(url,init)=>{
+    if(url===source.url)return new Response(`<rss><channel>${entries}</channel></rss>`);
+    if(url===environment.LLM_BASE_URL+'/chat/completions'){
+      const input=JSON.parse(JSON.parse(init.body).messages[1].content);
+      if(!Array.isArray(input)&&input.articles[0].title==='待分析文章')return Response.json({choices:[{message:{content:JSON.stringify({...modelResult(input.articles),facts:[{text:'不可信陈述',status:'待核验',sources:[input.articles[0].id],evidence:'这是原文不存在的句子'}]})}}]});
+    }return base(url,init);
+  };
+  const preview=await runAutomation(environment,'preview',now,fetcher);const p=await store.digest(preview.digestId);assert.equal(p.status,'ready');assert.equal(p.details.pendingCount,1);assert.equal(p.details.articleCount,1);assert.match(p.body,/有 1 篇文章尚未完成分析/);assert.doesNotMatch(p.body,/这是原文不存在/);assert.equal(calls.length,0);
+  const daily=await runAutomation(environment,'scheduled',now+1,fetcher);assert.equal(daily.stage,'sent');assert.equal(calls.length,1);assert.equal((await store.pendingArticles(now+2)).length,1);
+  const remaining=(await store.pendingArticles(now+2))[0];assert.equal(remaining.title,'待分析文章');assert.equal((await store.digest('2026-10-09')).details.pendingCount,1);DB.close();
+});
+test('a legacy empty sent digest is retained and permits exactly one content-bearing correction',async()=>{
+  const DB=d1(),store=new AutomationStore(DB),environment=env(DB),calls=[];await store.addSource(source);await store.saveSettings({enabled:true,sendTime:'08:00',emailTo:'',channels:{email:false,wecom:false,feishu:true}});
+  const body=renderEvents('2026-10-09',[],[]);await store.saveDigest({id:'2026-10-09',date:'2026-10-09',status:'ready',body,error:'',createdAt:now-1000,preview:false});
+  await DB.prepare("INSERT INTO digest_deliveries(digest_id,channel,status,attempts,payload) VALUES(?,'feishu','sent',1,'{}')").bind('2026-10-09').run();
+  const result=await runAutomation(environment,'scheduled',now,mockFetch(calls));assert.equal(result.digestId,'2026-10-09:content');assert.equal(calls.length,1);assert.equal((await store.digest('2026-10-09')).body,body);assert.equal((await store.digest('2026-10-09')).details.legacyEmpty,true);
+  await runAutomation(environment,'scheduled',now+900000,mockFetch(calls));assert.equal(calls.length,1);assert.equal((await store.deliveries()).filter(d=>d.status==='sent').length,2);DB.close();
+});
+test('delivery response reports rejection and uncertainty instead of unconditional success',async()=>{
+  for(const [status,expected] of [[400,'delivery_failed'],[500,'delivery_uncertain']]){
+    const DB=d1(),store=new AutomationStore(DB),environment=env(DB),calls=[];await store.addSource(source);await store.saveSettings({enabled:true,sendTime:'08:00',emailTo:'',channels:{email:false,wecom:false,feishu:true}});
+    const base=mockFetch(calls);const result=await runAutomation(environment,'scheduled',now,async(url,init)=>String(url).includes('open.feishu.cn')?new Response('',{status}):base(url,init));
+    assert.equal(result.stage,expected);assert.doesNotMatch(result.message,/发送成功/);DB.close();
+  }
+});
+test('preview history cannot hide daily records or become the selected daily record',async()=>{
+  const DB=d1(),store=new AutomationStore(DB);await store.saveDigest({id:'daily',date:'2026-10-09',status:'ready',body:'自编简报',error:'',createdAt:now,preview:false});
+  for(let i=0;i<12;i++)await store.saveDigest({id:'preview-'+i,date:'2026-10-09',status:'error',body:'',error:'还有文章等待成功分析，未发送不完整的简报；后续任务会继续处理。',createdAt:now+i+1,preview:true});
+  const list=await store.digests();assert.equal(list.filter(d=>!d.preview).length,1);assert.equal(selectHistory(list,false,'preview-11').id,'daily');assert.equal(selectHistory(list,true,'daily').id,'preview-11');assert.equal(digestLabel(list[0]),'等待分析');DB.close();
+});
+
+test('a valid empty RSS or Atom feed is a successful check with no articles',async()=>{
+  assert.deepEqual(await parseFeed('<rss><channel/></rss>',source,now),[]);
+  assert.deepEqual(await parseFeed('<feed xmlns="http://www.w3.org/2005/Atom"/>',source,now),[]);
 });

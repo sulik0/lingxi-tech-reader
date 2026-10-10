@@ -39,11 +39,23 @@ export class AutomationStore {
   async runs(){return (await this.db.prepare('SELECT * FROM collection_runs ORDER BY started_at DESC LIMIT 20').all()).results;}
   async collectionStats(){return await this.db.prepare("SELECT (SELECT COUNT(*) FROM feed_articles) AS articles, (SELECT COUNT(*) FROM reading_events) AS events, (SELECT COUNT(*) FROM reading_events WHERE json_extract(value,'$.pending')=0) AS analyzedEvents, (SELECT COUNT(*) FROM feed_articles WHERE length(content)>=80 AND (id NOT IN (SELECT article_id FROM event_articles) OR id IN (SELECT ea.article_id FROM event_articles ea JOIN reading_events re ON re.id=ea.event_id WHERE json_extract(re.value,'$.pending')=1))) AS pendingArticles").first<{articles:number;events:number;analyzedEvents:number;pendingArticles:number}>();}
   async commitDaily(d:Digest,ids:string[]) {
-    await this.db.batch([this.db.prepare("UPDATE daily_digests SET status='ready',body=?,error='' WHERE id=?").bind(d.body,d.id),...ids.map(id=>this.db.prepare('INSERT OR IGNORE INTO digest_articles(article_id,digest_id) VALUES(?,?)').bind(id,d.id))]);
+    await this.db.batch([this.db.prepare("UPDATE daily_digests SET status='ready',body=?,error='',details=? WHERE id=?").bind(d.body,JSON.stringify(d.details||{}),d.id),...ids.map(id=>this.db.prepare('INSERT OR IGNORE INTO digest_articles(article_id,digest_id) VALUES(?,?)').bind(id,d.id))]);
   }
-  async digests():Promise<Digest[]>{const {results}=await this.db.prepare('SELECT * FROM daily_digests ORDER BY created_at DESC LIMIT 10').all<any>();return results.map(d=>({id:d.id,date:d.date,status:d.status,body:d.body,error:d.error,createdAt:d.created_at,preview:!!d.preview}));}
-  async digest(id:string):Promise<Digest|null>{const d=await this.db.prepare('SELECT * FROM daily_digests WHERE id=?').bind(id).first<any>();return d?{id:d.id,date:d.date,status:d.status,body:d.body,error:d.error,createdAt:d.created_at,preview:!!d.preview}:null;}
-  async saveDigest(d:Digest){await this.db.prepare('INSERT INTO daily_digests(id,date,status,body,error,created_at,preview) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,body=excluded.body,error=excluded.error').bind(d.id,d.date,d.status,d.body,d.error,d.createdAt,+d.preview).run();}
+  private readDigest(d:any):Digest {
+    let details;try{details=JSON.parse(d.details||'{}');}catch{details={};}
+    const legacyEmpty=!d.preview&&d.status==='ready'&&d.reported_count===0&&/本次整理 0 (个事件|条资讯)/.test(d.body);
+    return {id:d.id,date:d.date,status:d.status,body:d.body,error:d.error,createdAt:d.created_at,preview:!!d.preview,details:{...details,...(legacyEmpty?{articleCount:0,eventCount:0,legacyEmpty:true}:{})}};
+  }
+  async digests():Promise<Digest[]> {
+    // Preview attempts must not crowd all daily records out of the history.
+    const {results}=await this.db.prepare('SELECT d.*, (SELECT COUNT(*) FROM digest_articles WHERE digest_id=d.id) AS reported_count FROM daily_digests d WHERE d.id IN (SELECT id FROM daily_digests WHERE preview=0 ORDER BY created_at DESC LIMIT 10) OR d.id IN (SELECT id FROM daily_digests WHERE preview=1 ORDER BY created_at DESC LIMIT 10) ORDER BY created_at DESC').all<any>();
+    return results.map(d=>this.readDigest(d));
+  }
+  async digest(id:string):Promise<Digest|null>{const d=await this.db.prepare('SELECT d.*, (SELECT COUNT(*) FROM digest_articles WHERE digest_id=d.id) AS reported_count FROM daily_digests d WHERE d.id=?').bind(id).first<any>();return d?this.readDigest(d):null;}
+  async saveDigest(d:Digest){await this.db.prepare('INSERT INTO daily_digests(id,date,status,body,error,created_at,preview,details) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,body=excluded.body,error=excluded.error,details=excluded.details').bind(d.id,d.date,d.status,d.body,d.error,d.createdAt,+d.preview,JSON.stringify(d.details||{})).run();}
+  async queueSummary(cutoff:number) {
+    return await this.db.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN length(a.content)>=80 AND (e.id IS NULL OR json_extract(e.value,'$.pending')=1) THEN 1 ELSE 0 END) AS pending FROM feed_articles a LEFT JOIN event_articles ea ON ea.article_id=a.id LEFT JOIN reading_events e ON e.id=ea.event_id WHERE a.collected_at<? AND a.source_id IN (SELECT id FROM feed_sources WHERE enabled=1) AND a.id NOT IN (SELECT article_id FROM digest_articles)").bind(cutoff).first<{total:number;pending:number}>();
+  }
   async deliveries(id?:string){return (await this.db.prepare('SELECT digest_id,channel,status,attempts,started_at,error FROM digest_deliveries'+(id?' WHERE digest_id=?':' ORDER BY started_at DESC LIMIT 30')).bind(...(id?[id]:[])).all()).results;}
   async acquire(now:number){const holder=crypto.randomUUID();const r=await this.db.prepare('INSERT INTO automation_lock(id,holder,expires_at) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET holder=excluded.holder,expires_at=excluded.expires_at WHERE automation_lock.expires_at<?').bind(holder,now+12*60000,now).run();return r.meta.changes?holder:null;}
   async release(holder:string){await this.db.prepare('DELETE FROM automation_lock WHERE holder=?').bind(holder).run();}

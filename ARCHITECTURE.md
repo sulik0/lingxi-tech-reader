@@ -11,11 +11,11 @@ Cloudflare Worker 负责采集、分析和发送，D1 保存来源、文章、�
 | `lib/roundup.ts`、`lib/automation/digest.ts` | 将明确的多主题早报单独保留，其他文章由模型按具体事件分组，检查 ID 是否完整且不重复。 |
 | `lib/automation/events.ts` | 比较新报道和近期事件，分析正文，保存统一事件，并把这些事件排成每日简报。 |
 | `lib/analyze.ts` | 调用模型，检查正文引文、评分与推荐文章 ID；提供八类分析结果。 |
-| `lib/automation/runner.ts` | 执行采集、事件更新、每日冻结简报和发送，保留错误。 |
+| `lib/automation/selection.ts`、`lib/automation/runner.ts` | 选择已经分析的内容，未完成文章继续排队；有内容时冻结简报并发送，保留等待、错误和渠道结果。 |
 | `lib/automation/delivery.ts` | 调用邮件、企业微信与飞书接口，判断结果与不确定状态。 |
 | `lib/automation/api.ts` | 检查管理员口令，提供配置、事件读取、分组修正与任务接口。 |
 | `components/automatic-reader.tsx`、`app/page.tsx` | 读取后台事件，展示文章与分析；收藏和已读仍保存在当前浏览器。 |
-| `components/automation-panel.tsx` | 管理来源、发送时间、预览和记录。 |
+| `components/automation-panel.tsx`、`lib/automation/presentation.ts` | 将简报、来源和推送设置分开，区分等待、生成与发送状态；预览与正式记录分别查看。 |
 | `lib/event-state.ts` | 文章集合改变时，清除旧分析和推荐。 |
 | `build/sites-worker.ts` | 提供页面、API 与 scheduled 定时入口。 |
 | `scripts/verify-sources.mjs` | 用真实来源验证采集、重复入库和事件处理，正文写入忽略目录。 |

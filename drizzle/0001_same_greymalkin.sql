@@ -1,0 +1,1 @@
+ALTER TABLE `daily_digests` ADD `details` text DEFAULT '{}' NOT NULL;

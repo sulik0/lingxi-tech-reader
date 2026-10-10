@@ -1,3 +1,4 @@
+import {selectDigestEvents} from './selection.ts';
 import { AutomationStore } from './store.ts';
 import { hash, feedURL } from './feeds.ts';
 import { fetchFeed } from './feeds.ts';
@@ -32,23 +33,34 @@ export async function runAutomation(env:AutomationEnv,mode:'scheduled'|'collect'
     if(mode==='collect'){const stats=await store.collectionStats();return {message:`已检查 ${sources.length} 个来源，新增 ${added} 篇文章。${added===0?'没有发现新文章，已有文章不会重复入库。':''}已保存 ${stats?.articles||0} 篇，${stats?.pendingArticles||0} 篇正文等待后台分析；可在自动阅读工作台查看。`,added,failures};}
     const schedule=beijingSchedule(now,settings.sendTime);
     if(mode==='scheduled'&&!schedule.due)return {message:'已检查订阅，尚未到发送时间。',failures};
-    const id=mode==='preview'?`preview:${now}`:schedule.date;
-    const previous=await store.digest(id);
+    let id=mode==='preview'?`preview:${now}`:schedule.date;
+    let previous=await store.digest(id);
+    // Keep the old empty message as history; permit exactly one real digest for that day.
+    if(previous?.details?.legacyEmpty){id=`${schedule.date}:content`;previous=await store.digest(id);}
     if(failedSources===sources.length&&previous?.status!=='ready')throw new AutomationError('全部订阅源读取失败，未生成或发送简报。',502);
     digest=previous||{id,date:schedule.date,status:'generating',body:'',error:'',createdAt:now,preview:mode==='preview'};
     if(digest.status!=='ready') {
       digest.status='generating';digest.error='';await store.saveDigest(digest);
-      // A preview covers the preceding 24 hours; daily delivery uses fixed, non-overlapping windows.
-      const articles=mode==='preview'?await store.articles(now-86400000,now):await store.pendingArticles(schedule.cutoff,241);
-      const ids=new Set(articles.slice(0,24).map(a=>a.id));
-      const events=(await store.events()).filter(e=>e.articles.some(a=>ids.has(a.id)));
-      if(articles.slice(0,24).some(a=>a.content.length>=80&&!events.some(e=>!e.pending&&e.articles.some(b=>b.id===a.id))))throw new AutomationError('还有文章等待成功分析，未发送不完整的简报；后续任务会继续处理。',503);
-      digest.body=renderEvents(schedule.date,events,failures,articles.length>24);digest.status='ready';
+      // Include this cycle's collection. The send time determines when to send, not which new articles to discard.
+      const articles=mode==='preview'?await store.articles(now-86400000,now+1):await store.pendingArticles(now+1,241);
+      const selection=selectDigestEvents(articles,await store.events());
+      const queue=mode==='preview'?null:await store.queueSummary(now+1);
+      const pendingCount=queue?.pending??selection.pendingCount;
+      const remainingCount=Math.max(0,(queue?.total??articles.length)-selection.articleCount);
+      digest.details={articleCount:selection.articleCount,eventCount:selection.events.length,pendingCount,remainingCount,completedAt:Math.max(now,Date.now())};
+      if(!selection.events.length){
+        digest.status=(queue?.total??articles.length)>0?'waiting':'empty';
+        digest.error='';digest.body='';await store.saveDigest(digest);
+        return {stage:digest.status,digestId:id,added,failures,message:digest.status==='waiting'?'文章已保存，正在等待分析；目前没有可展示的简报，也没有发送。':'目前没有可纳入简报的新文章，没有发送；发现新内容后会继续处理。'};
+      }
+      digest.body=renderEvents(schedule.date,selection.events,failures.slice(0,failedSources),remainingCount>0);
+      if(pendingCount)digest.body+=`\n\n生成时有 ${pendingCount} 篇文章尚未完成分析，未包含在本次简报中。`;
+      digest.status='ready';
       if(mode==='preview')await store.saveDigest(digest);
-      else await store.commitDaily(digest,[...new Set(events.flatMap(e=>e.articles.map(a=>a.id)))]);
-
+      else await store.commitDaily(digest,selection.articleIds);
     }
-    if(mode==='preview')return {message:'预览已生成，没有发送到任何渠道。'};
+    if(mode==='preview')return {stage:'preview',digestId:id,added,failures,message:`预览已生成${digest.details?.pendingCount?`，还有 ${digest.details.pendingCount} 篇待分析`:''}，没有发送到任何渠道。`};
+    const alreadySent=new Set((await store.deliveries(id)).filter(d=>d.status==='sent').map(d=>d.channel));
     const ready=channelReady(env);
     for(const channel of ['email','wecom','feishu'] as Channel[]) {
       if(!settings.channels[channel])continue;
@@ -64,6 +76,13 @@ export async function runAutomation(env:AutomationEnv,mode:'scheduled'|'collect'
       const row=await store.db.prepare('SELECT payload FROM digest_deliveries WHERE digest_id=? AND channel=?').bind(id,channel).first<{payload:string}>();
       try{await sendDelivery(channel,JSON.parse(row!.payload),`lingxi-daily/${id}/${channel}`,env,fetcher,now);await store.db.prepare("UPDATE digest_deliveries SET status='sent',error='' WHERE digest_id=? AND channel=?").bind(id,channel).run();}catch(e){const uncertain=e instanceof DeliveryError&&e.uncertain;await store.db.prepare('UPDATE digest_deliveries SET status=?,error=? WHERE digest_id=? AND channel=?').bind(uncertain&&channel!=='email'?'uncertain':'error',e instanceof DeliveryError?e.message:'发送失败，请检查服务端配置。',id,channel).run();}
     }
-    return {message:'今日简报已处理，发送结果请查看记录。'};
+    const deliveries=await store.deliveries(id);const names={email:'邮件',wecom:'企业微信',feishu:'飞书'};
+    const selected=(['email','wecom','feishu'] as Channel[]).filter(c=>settings.channels[c]);
+    const states=selected.map(channel=>{
+      const row=deliveries.find(d=>d.channel===channel);
+      const status=String(row?.status||'pending');
+      return {channel,status,message:`${names[channel]}：${status==='sent'?(alreadySent.has(channel)?'今日已发送，不会重复发送':'发送成功'):status==='uncertain'?'无法确认送达，请先检查消息':status==='error'?'发送失败':status==='sending'?'正在发送':'等待发送'}`};
+    });
+    return {stage:states.some(s=>s.status==='uncertain')?'delivery_uncertain':states.some(s=>s.status==='error')?'delivery_failed':states.every(s=>s.status==='sent')&&states.length?'sent':'ready',digestId:id,added,failures,message:states.length?states.map(s=>s.message).join('；'):'简报已生成，尚未启用发送渠道。'};
   }catch(e){if(digest&&digest.status!=='ready'){digest.status='error';digest.error=e instanceof Error?e.message:'生成失败。';await store.saveDigest(digest);}throw e;}finally{await store.release(lock);}
 }

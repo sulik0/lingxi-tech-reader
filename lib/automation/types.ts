@@ -20,7 +20,8 @@ export const suggestedFeeds = [
   {name:'宝玉的分享（博客 RSS）',url:'https://s.baoyu.io/feed.xml'},
 ];
 export type CollectedArticle = {id:string;source:string;title:string;author:string;content:string;url:string;publishedAt:number;collectedAt:number;contentHash:string};
-export type Digest = {id:string;date:string;status:string;body:string;error:string;createdAt:number;preview:boolean};
+export type DigestDetails = {articleCount?:number;eventCount?:number;pendingCount?:number;remainingCount?:number;completedAt?:number;legacyEmpty?:boolean};
+export type Digest = {details?:DigestDetails;id:string;date:string;status:string;body:string;error:string;createdAt:number;preview:boolean};
 export class AutomationError extends Error {
   status:number;
   constructor(message:string,status=400){super(message);this.status=status;}
