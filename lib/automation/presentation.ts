@@ -12,3 +12,7 @@ export function selectHistory(digests:Digest[],preview:boolean,selected='') {
   const list=digests.filter(d=>d.preview===preview);
   return list.find(d=>d.id===selected)||list[0];
 }
+
+export function selectReport(digests:Digest[],selected='') {
+  return digests.find(d=>d.id===selected)||digests.find(d=>d.status==='ready'&&!!d.body&&!d.details?.legacyEmpty)||digests[0];
+}

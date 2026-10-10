@@ -8,9 +8,9 @@ import {beijingSchedule,validateSettings,defaultSettings} from '../lib/automatio
 import {AutomationStore} from '../lib/automation/store.ts';
 import {clusterArticles,validateGroups} from '../lib/automation/digest.ts';
 import {robotBrief,deliveryPayload,sendDelivery,feishuSignature,truncateBytes} from '../lib/automation/delivery.ts';
-import {runAutomation} from '../lib/automation/runner.ts';
+import {runAutomation,sendReport} from '../lib/automation/runner.ts';
 import {processEvents,renderEvents} from '../lib/automation/events.ts';
-import {digestLabel,selectHistory} from '../lib/automation/presentation.ts';
+import {digestLabel,selectHistory,selectReport} from '../lib/automation/presentation.ts';
 import {invalidateEvent} from '../lib/event-state.ts';
 import {handleAutomation} from '../lib/automation/api.ts';
 const now=Date.parse('2026-10-09T08:15:00+08:00');
@@ -262,4 +262,42 @@ test('preview history cannot hide daily records or become the selected daily rec
 test('a valid empty RSS or Atom feed is a successful check with no articles',async()=>{
   assert.deepEqual(await parseFeed('<rss><channel/></rss>',source,now),[]);
   assert.deepEqual(await parseFeed('<feed xmlns="http://www.w3.org/2005/Atom"/>',source,now),[]);
+});
+
+test('manual collection, report and send are separate; explicit send ignores the paused daily schedule',async()=>{
+ const DB=d1(),store=new AutomationStore(DB),environment=env(DB),calls=[];await store.addSource(source);await store.saveSettings({...defaultSettings,sendTime:'23:45'});
+ let feeds=0,models=0;const base=mockFetch(calls);const fetcher=async(url,init)=>{if(url===source.url)feeds++;if(url===environment.LLM_BASE_URL+'/chat/completions')models++;return base(url,init);};
+ await runAutomation(environment,'collect',now,fetcher);assert.equal(feeds,1);assert.equal(models,0);assert.equal(calls.length,0);
+ const result=await runAutomation(environment,'report',now+1,fetcher);assert.equal(result.stage,'report');assert.equal(feeds,1);assert.ok(models>0);assert.equal(calls.length,0);
+ const frozen=await store.digest(result.digestId);assert.equal(frozen.details.manual,true);assert.match(frozen.body,/科技聚合报告/);
+ const [event]=await store.events();await store.saveEvents([{...event,summary:'后来改写的自编内容，不属于这份报告。'}]);
+ const count=models;assert.equal((await sendReport(environment,result.digestId,now+2,fetcher)).stage,'sent');assert.equal(models,count);assert.equal(feeds,1);assert.equal(calls.length,1);
+ assert.match(JSON.parse(calls[0].init.body).content.text,/新增本地部署功能/);assert.doesNotMatch(JSON.parse(calls[0].init.body).content.text,/后来改写/);assert.equal((await store.digest(result.digestId)).body,frozen.body);
+ assert.match((await sendReport(environment,result.digestId,now+3,fetcher)).message,/这份报告已发送，不会重复发送/);assert.equal(calls.length,1);assert.equal((await store.pendingArticles(now+4)).length,1);assert.equal(await store.digest('2026-10-09'),null);DB.close();
+});
+test('manual sending rejects empty, unknown, expired and concurrent reports',async()=>{
+ const DB=d1(),store=new AutomationStore(DB),environment=env(DB);await store.addSource(source);
+ const empty=await runAutomation(environment,'report',now,mockFetch([]));assert.equal(empty.stage,'empty');await assert.rejects(sendReport(environment,empty.digestId,now+1,mockFetch([])),/没有可发送/);
+ await assert.rejects(sendReport(environment,'report:unknown',now,mockFetch([])),/先生成/);await runAutomation(environment,'collect',now+1,mockFetch([]));const result=await runAutomation(environment,'report',now+2,mockFetch([]));
+ await assert.rejects(sendReport(environment,result.digestId,now+24*3600000,mockFetch([])),/超过发送时限/);const holder=await store.acquire(now+3);await assert.rejects(sendReport(environment,result.digestId,now+4,mockFetch([])),/已有任务/);await store.release(holder);DB.close();
+});
+test('ambiguous manual robot sends are recorded and cannot be resent by repeated clicks',async()=>{
+ const DB=d1(),store=new AutomationStore(DB),environment=env(DB);await store.addSource(source);await runAutomation(environment,'collect',now,mockFetch([]));const result=await runAutomation(environment,'report',now+1,mockFetch([]));let sends=0;
+ const fail=async()=>{sends++;throw Error('timeout');};assert.equal((await sendReport(environment,result.digestId,now+2,fail)).stage,'delivery_uncertain');await sendReport(environment,result.digestId,now+3,fail);assert.equal(sends,1);assert.equal((await store.deliveries(result.digestId))[0].status,'uncertain');DB.close();
+});
+test('manual report send endpoint retains authentication and same-origin checks',async()=>{
+ const DB=d1(),environment=env(DB),url='https://site.test/api/automation/reports/report:unknown/send';
+ assert.equal((await handleAutomation(new Request(url,{method:'POST'}),environment)).status,401);
+ const headers={Authorization:'Bearer '+environment.AUTOMATION_TOKEN,origin:'https://evil.test'};assert.equal((await handleAutomation(new Request(url,{method:'POST',headers}),environment)).status,403);
+ assert.equal((await handleAutomation(new Request(url,{method:'POST',headers:{...headers,origin:'https://site.test'}}),environment)).status,404);
+ await new AutomationStore(DB).saveDigest({id:'report:empty',date:'2026-10-09',status:'empty',body:'',error:'',createdAt:now,preview:true,details:{manual:true,eventCount:0}});
+ const encoded=new Request('https://site.test/api/automation/reports/'+encodeURIComponent('report:empty')+'/send',{method:'POST',headers:{...headers,origin:'https://site.test'}});assert.equal((await handleAutomation(encoded,environment)).status,409);DB.close();
+});
+test('report selection prefers usable content over failures and honors explicit history choices',()=>{
+ const daily={id:'daily',status:'ready',body:'自编报告',preview:false},waiting={id:'report:new',status:'waiting',body:'',preview:true,details:{manual:true}};
+ assert.equal(selectReport([waiting,daily]).id,'daily');assert.equal(selectReport([waiting,daily],waiting.id).id,waiting.id);assert.equal(selectReport([{...daily,id:'old',details:{legacyEmpty:true}},daily]).id,'daily');
+});
+test('report includes links to other sources in addition to the recommended article',()=>{
+ const body=renderEvents('2026-10-09',[{...modelResult([{id:'a'}]),articles:[{id:'a',title:'自编来源 A',score:80,url:'https://article.example/a'},{id:'b',title:'自编来源 B',score:70,url:'https://article.example/b'}]}],[]);
+ assert.match(body,/原文：https:\/\/article.example\/a/);assert.match(body,/参考：自编来源 B｜https:\/\/article.example\/b/);
 });

@@ -5,11 +5,11 @@
 | 文档 | 内容 |
 | --- | --- |
 | [自动订阅与推送](automation.md) | 订阅源、D1 初始化、定时任务、每日去重、三渠道配置和发送记录。 |
-| [实现说明](implementation.md) | 导入、去重与分组、保存与导出、分析接口、结果检查、评分和已知实现限制。 |
+| [实现说明](implementation.md) | 报告前端、分析接口、结果检查、评分和已知实现限制。 |
 | [配置说明](configuration.md) | 开发环境、模型变量、兼容接口要求和配置状态的含义。 |
 | [构建与部署](deployment.md) | 本地构建和预览、线上运行需要准备的配置，以及当前发布状态。 |
 | [测试与验证](testing.md) | 本地检查命令、自动测试覆盖范围、手动验证和 GitHub Actions。 |
-| [常见问题](troubleshooting.md) | 安装、启动、分析和本地数据出问题时如何处理。 |
+| [常见问题](troubleshooting.md) | 安装、启动、报告生成和推送出问题时如何处理。 |
 
 第一次运行请看根目录的 [Quick Start](../README.md#quick-start)；理解模块之间的关系请看[核心架构](../ARCHITECTURE.md)。
 

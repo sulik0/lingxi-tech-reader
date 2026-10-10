@@ -3,7 +3,7 @@ import { AnalysisError, analyzeArticles } from '../analyze.ts';
 import { AutomationStore } from './store.ts';
 import { feedURL } from './feeds.ts';
 import { channelReady } from './delivery.ts';
-import { runAutomation } from './runner.ts';
+import { runAutomation, sendReport } from './runner.ts';
 import { AutomationError, suggestedFeeds, validateSettings, type AutomationEnv } from './types.ts';
 async function authorized(request:Request,token:string) {
   const supplied=request.headers.get('authorization')?.replace(/^Bearer /,'')||'';
@@ -26,7 +26,10 @@ export async function handleAutomation(request:Request,env:AutomationEnv) {
     if(!['POST','PATCH','DELETE'].includes(request.method))throw new AutomationError('请求方法不支持。',405);
     if(request.headers.get('origin')!==url.origin)throw new AutomationError('请从同一地址的工作台操作。',403);
     if(await store.busy(Date.now()))throw new AutomationError('后台任务正在运行，稍后再修改设置或来源。',409);
-    if(request.method==='POST'&&['/collect','/preview','/run'].includes(path))return json(await runAutomation(env,path==='/collect'?'collect':path==='/preview'?'preview':'scheduled'));
+    if(request.method==='POST'&&['/collect','/preview','/report','/run'].includes(path))return json(await runAutomation(env,path==='/collect'?'collect':path==='/preview'?'preview':path==='/report'?'report':'scheduled'));
+    const encodedReportID=path.match(/^\/reports\/([^/]{1,320})\/send$/)?.[1];
+    let reportID='';if(encodedReportID){try{reportID=decodeURIComponent(encodedReportID);}catch{throw new AutomationError('报告编号无效。');}if(!/^report:[a-zA-Z0-9:-]{1,100}$/.test(reportID))throw new AutomationError('报告编号无效。');}
+    if(request.method==='POST'&&reportID)return json(await sendReport(env,reportID));
     if(!request.headers.get('content-type')?.includes('application/json'))throw new AutomationError('需要 JSON 正文。',415);
     const raw=await request.text();if(raw.length>8000)throw new AutomationError('设置内容过大。',413);
     let body:any;try{body=JSON.parse(raw);}catch{throw new AutomationError('设置不是有效 JSON。');}

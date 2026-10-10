@@ -29,7 +29,7 @@ export function deliveryPayload(channel:Channel,body:string,date:string,settings
   if(channel==='email')return {from:env.EMAIL_FROM,to:[settings.emailTo],subject:`灵析每日科技简报 · ${date}`,text:body};
   const max=channel==='wecom'?1900:15000;
   const brief=robotBrief(body);
-  const suffix='\n\n（完整简报请在灵析“自动订阅与推送”中查看）';
+  const suffix='\n\n（完整简报请在灵析报告页中查看）';
   const shortened=brief!==body || new TextEncoder().encode(brief).length>max;
   const text=shortened?truncateBytes(brief,max-new TextEncoder().encode(suffix).length)+suffix:brief;
   return channel==='wecom'?{msgtype:'text',text:{content:text}}:{msg_type:'text',content:{text}};
