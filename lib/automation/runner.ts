@@ -1,7 +1,7 @@
 import { AutomationStore } from './store.ts';
 import { hash, feedURL } from './feeds.ts';
 import { fetchFeed } from './feeds.ts';
-import { processEvents, renderEvents } from './events.ts';
+import { processEvents, publishCollectedEvents, renderEvents } from './events.ts';
 import { channelReady, deliveryPayload, sendDelivery, DeliveryError } from './delivery.ts';
 import { beijingSchedule, AutomationError, type AutomationEnv, type Channel, type Digest, suggestedFeeds } from './types.ts';
 export async function runAutomation(env:AutomationEnv,mode:'scheduled'|'collect'|'preview'='scheduled',now=Date.now(),fetcher:typeof fetch=fetch) {
@@ -23,12 +23,13 @@ export async function runAutomation(env:AutomationEnv,mode:'scheduled'|'collect'
     let added=0;const failures:string[]=[];
     for(const source of sources){try{const articles=await fetchFeed(source,env.FEED_ALLOWED_HOSTS||'',now,fetcher);added+=await store.addArticles(source.id,articles);await store.sourceResult(source.id,now,'');}catch(e){const error=e instanceof AutomationError?e.message:'读取订阅失败，请稍后重试。';failures.push(`${source.name}：${error}`);await store.sourceResult(source.id,now,error);}}
     const failedSources=failures.length;
-    try{const errors=await processEvents(store,env,now,fetcher);if(errors?.length)failures.push(...errors.map(e=>'事件分析：'+e));}catch(e){failures.push('事件分析：'+(e instanceof Error?e.message:'分析失败，文章仍保留。'));}
+    if(mode==='collect')await publishCollectedEvents(store,now);
+    else try{const errors=await processEvents(store,env,now,fetcher);if(errors?.length)failures.push(...errors.map(e=>'事件分析：'+e));}catch(e){failures.push('事件分析：'+(e instanceof Error?e.message:'分析失败，文章仍保留。'));}
     await store.collectionRun(now,added,failures);
     // Retention also runs when delivery is paused.
     await store.db.batch([store.db.prepare('DELETE FROM feed_articles WHERE collected_at<? AND id IN (SELECT article_id FROM digest_articles)').bind(now-14*86400000),store.db.prepare('DELETE FROM daily_digests WHERE preview=1 AND created_at<?').bind(now-7*86400000)]);
     if(mode==='scheduled'&&!settings.enabled)return {message:'已检查订阅，每日推送未启用。',failures};
-    if(mode==='collect')return {message:`已检查 ${sources.length} 个来源，新增 ${added} 篇文章。`,failures};
+    if(mode==='collect'){const stats=await store.collectionStats();return {message:`已检查 ${sources.length} 个来源，新增 ${added} 篇文章。${added===0?'没有发现新文章，已有文章不会重复入库。':''}已保存 ${stats?.articles||0} 篇，${stats?.pendingArticles||0} 篇正文等待后台分析；可在自动阅读工作台查看。`,added,failures};}
     const schedule=beijingSchedule(now,settings.sendTime);
     if(mode==='scheduled'&&!schedule.due)return {message:'已检查订阅，尚未到发送时间。',failures};
     const id=mode==='preview'?`preview:${now}`:schedule.date;

@@ -83,6 +83,17 @@ test('shared events retain copied sources and clear stale analysis on changed me
   await processEvents(store,env(DB),now,mockFetch([]));const [event]=await store.events();assert.equal(event.pending,false);assert.match(renderEvents('2026-10-09',[event],[]),/推荐阅读/);
   const fresh=invalidateEvent(event,event.articles);assert.equal(fresh.pending,true);assert.equal(fresh.facts.length,0);assert.equal(fresh.articles[0].score,undefined);assert.doesNotMatch(fresh.conclusion,/部署要求/);DB.close();
 });
+test('checking new articles publishes pending events without waiting for or calling a model',async()=>{
+  const DB=d1(),store=new AutomationStore(DB),environment=env(DB);await store.addSource(source);
+  let feedCalls=0;const feedOnly=async(url)=>{assert.equal(url,source.url);feedCalls++;return new Response(rss());};
+  const first=await runAutomation(environment,'collect',now,feedOnly);assert.equal(first.added,1);
+  const [pending]=await store.events();assert.equal(pending.pending,true);assert.equal(pending.articles.length,1);assert.deepEqual(pending.facts,[]);
+  assert.deepEqual({...await store.collectionStats()},{articles:1,events:1,analyzedEvents:0,pendingArticles:1});
+  const repeat=await runAutomation(environment,'collect',now+1,feedOnly);assert.equal(repeat.added,0);assert.match(repeat.message,/已有文章不会重复入库/);assert.equal((await store.runs()).length,2);
+  await processEvents(store,environment,now+2,mockFetch([]));const analyzed=(await store.events())[0];assert.equal(analyzed.pending,false);
+  await runAutomation(environment,'collect',now+3,feedOnly);assert.deepEqual((await store.events())[0],analyzed);
+  assert.deepEqual({...await store.collectionStats()},{articles:1,events:1,analyzedEvents:1,pendingArticles:0});assert.equal(feedCalls,3);DB.close();
+});
 test('three delivery protocols respect UTF-8 limits, signatures and provider rejection',async()=>{
   const settings={...defaultSettings,emailTo:'reader@example.test'};const long='汉'.repeat(2000);
   assert.ok(new TextEncoder().encode(truncateBytes(long,1900)).length<=1900);
@@ -146,7 +157,8 @@ test('overflow is retained across days and only unreported articles enter the ne
   await store.saveSettings({enabled:true,sendTime:'08:00',emailTo:'',channels:{email:false,wecom:false,feishu:true}});
   const entries=Array.from({length:25},(_,i)=>`<item><guid>overflow-${i}</guid><title>事件 ${i}</title><link>https://article.example/${i}</link><pubDate>2026-10-09T07:00:00+08:00</pubDate><description><![CDATA[${content} 编号 ${i}]]></description></item>`).join('');
   const base=mockFetch(calls);const fetcher=async(url,init)=>url===source.url?new Response(`<rss><channel>${entries}</channel></rss>`):base(url,init);
-  for(let i=0;i<5;i++)await runAutomation(environment,'collect',now-3600000+i*900000,fetcher);
+  // Background cycles before the daily cutoff analyze queued articles; manual checks do not.
+  for(let i=0;i<5;i++)await runAutomation(environment,'scheduled',now-2*3600000+i*900000,fetcher);
   await runAutomation(environment,'scheduled',now+5*900000,fetcher);assert.equal(calls.length,1);assert.equal((await store.pendingArticles(now+86400000)).length,1);
   await runAutomation(environment,'scheduled',now+6*900000,fetcher);assert.equal(calls.length,1);
   await runAutomation(environment,'scheduled',now+86400000,fetcher);assert.equal(calls.length,2);assert.equal((await store.pendingArticles(now+2*86400000)).length,0);DB.close();

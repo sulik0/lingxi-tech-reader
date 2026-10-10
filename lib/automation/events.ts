@@ -8,6 +8,14 @@ const toArticle=(a:CollectedArticle)=>({...a,time:new Date(a.publishedAt).toLoca
 export function pendingEvent(articles:CollectedArticle[],now:number,id=articles[0].id):EventItem {
   return {id,automatic:true,updatedAt:now,title:articles[0].title,category:'科技资讯',tag:'自动采集',time:new Date(now).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'}),minutes:3,color:'#edf5ee',summary:'已自动采集正文，等待模型分析。',points:[],facts:[],opinions:[],articles:articles.map(toArticle),conclusion:'尚未完成分析，暂不推荐文章。',uncertainty:'正文来自订阅源，尚未独立核实。',demo:false,pending:true};
 }
+export async function publishCollectedEvents(store:AutomationStore,now:number) {
+  // One collection reads at most 10 sources × 50 articles. Existing analysis stays intact.
+  const incoming=await store.unprocessed(500,false);
+  const events=incoming.map(a=>a.content.length<80
+    ? {...pendingEvent([a],now),summary:a.content,uncertainty:'订阅源只有短摘要，未作质量评分。'}
+    : pendingEvent([a],now));
+  for(let i=0;i<events.length;i+=25)await store.saveEvents(events.slice(i,i+25));
+}
 export async function processEvents(store:AutomationStore,env:AutomationEnv,now:number,fetcher:typeof fetch=fetch) {
   const incoming=await store.unprocessed(6,configured(env));
   if(!incoming.length)return;

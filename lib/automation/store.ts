@@ -37,6 +37,7 @@ export class AutomationStore {
   }
   async collectionRun(now:number,added:number,failures:string[]){await this.db.prepare('INSERT INTO collection_runs(id,started_at,added,failures) VALUES(?,?,?,?)').bind(crypto.randomUUID(),now,added,JSON.stringify(failures)).run();}
   async runs(){return (await this.db.prepare('SELECT * FROM collection_runs ORDER BY started_at DESC LIMIT 20').all()).results;}
+  async collectionStats(){return await this.db.prepare("SELECT (SELECT COUNT(*) FROM feed_articles) AS articles, (SELECT COUNT(*) FROM reading_events) AS events, (SELECT COUNT(*) FROM reading_events WHERE json_extract(value,'$.pending')=0) AS analyzedEvents, (SELECT COUNT(*) FROM feed_articles WHERE length(content)>=80 AND (id NOT IN (SELECT article_id FROM event_articles) OR id IN (SELECT ea.article_id FROM event_articles ea JOIN reading_events re ON re.id=ea.event_id WHERE json_extract(re.value,'$.pending')=1))) AS pendingArticles").first<{articles:number;events:number;analyzedEvents:number;pendingArticles:number}>();}
   async commitDaily(d:Digest,ids:string[]) {
     await this.db.batch([this.db.prepare("UPDATE daily_digests SET status='ready',body=?,error='' WHERE id=?").bind(d.body,d.id),...ids.map(id=>this.db.prepare('INSERT OR IGNORE INTO digest_articles(article_id,digest_id) VALUES(?,?)').bind(id,d.id))]);
   }

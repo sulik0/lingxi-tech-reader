@@ -22,7 +22,7 @@ export async function handleAutomation(request:Request,env:AutomationEnv) {
     const url=new URL(request.url);const path=url.pathname.replace('/api/automation','');
     const store=new AutomationStore(env.DB);
     if(request.method==='GET'&&path==='/events')return json({events:await store.events()});
-    if(request.method==='GET'&&path==='')return json({settings:await store.settings(),sources:await store.sources(),digests:await store.digests(),deliveries:await store.deliveries(),busy:await store.busy(Date.now()),services:{model:!!(env.LLM_API_KEY&&env.LLM_BASE_URL&&env.LLM_MODEL),...channelReady(env)},suggestedFeeds,runs:await store.runs()});
+    if(request.method==='GET'&&path==='')return json({settings:await store.settings(),sources:await store.sources(),digests:await store.digests(),deliveries:await store.deliveries(),busy:await store.busy(Date.now()),services:{model:!!(env.LLM_API_KEY&&env.LLM_BASE_URL&&env.LLM_MODEL),...channelReady(env)},suggestedFeeds,runs:await store.runs(),stats:await store.collectionStats()});
     if(!['POST','PATCH','DELETE'].includes(request.method))throw new AutomationError('请求方法不支持。',405);
     if(request.headers.get('origin')!==url.origin)throw new AutomationError('请从同一地址的工作台操作。',403);
     if(await store.busy(Date.now()))throw new AutomationError('后台任务正在运行，稍后再修改设置或来源。',409);
