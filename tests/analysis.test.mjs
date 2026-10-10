@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {validateInput,validateResult,locateEvidence,analyzeArticles,handleAnalysis} from '../lib/analyze.ts';
+import {validateInput,validateResult,locateEvidence,evidencePassages,analyzeArticles,handleAnalysis} from '../lib/analyze.ts';
 const a={id:'a1',title:'模型 A 发布',source:'来源一',author:'作者一',content:'模型 A 提供两种部署规模。'+ '可验证的导入文章正文。'.repeat(12)};
 const b={...a,id:'a2',source:'来源二',content:'模型 A 提供两种部署规模。'+ '第二篇文章提供独立解读。'.repeat(12)};
 const result={sameEvent:true,title:'模型 A 发布',summary:'发布了两个部署规模。',points:['两种规模。'],facts:[{text:'提供两种规模',status:'来源一致',sources:['a1','a2'],evidence:'模型 A 提供两种部署规模。'}],opinions:[{author:'作者一',source:'来源一',view:'部署更灵活',basis:'作者根据规模选择的判断。'}],evaluations:[a,b].map(x=>({id:x.id,metrics:[90,80,90,70],hype:'低',duplicate:35,reason:'保留一手陈述与判断边界',extra:'比较部署选择',flags:[]})),conclusion:'可按部署需求查看原文',uncertainty:'真实运行成本需要测试'};
@@ -45,4 +45,25 @@ test('truncated JSON gets one concise retry; persistent invalid JSON still fails
     calls++;if(calls===2)assert.match(JSON.parse(init.body).messages.at(-1).content,/输出达到长度限制/);
     return Response.json({choices:[{finish_reason:'length',message:{content:'{"sameEvent":true'}}]});
   }),/输出达到长度限制/);assert.equal(calls,2);
+});
+
+test('source span citations resolve to exact article text and reject unknown or mismatched sources',()=>{
+ const valid={...result,facts:[{text:'提供两种规模',status:'待核验',sources:['a1'],evidenceId:'s0.0'}]};
+ assert.equal(validateResult(valid,[a,b]).facts[0].evidence,'模型 A 提供两种部署规模。');
+ assert.throws(()=>validateResult({...valid,facts:[{...valid.facts[0],evidenceId:'unknown'}]},[a,b]),/已有的编号/);
+ assert.throws(()=>validateResult({...valid,facts:[{...valid.facts[0],sources:['a2']}]},[a,b]),/其他来源/);
+});
+test('evidence spans preserve the entire body without invented text or broken Unicode',()=>{
+ const article={...a,content:'原句一。\n'+('😀技术说明'.repeat(180))+'\n原句二！'};
+ const [{passages}]=evidencePassages([article]);assert.ok(passages.length>2);
+ assert.equal(passages.map(p=>p.text).join('').replace(/\s/g,''),article.content.replace(/\s/g,''));
+ assert.ok(passages.every(p=>article.content.includes(p.text)&&p.text.isWellFormed()&&Array.from(p.text).length<=600));
+});
+test('analysis sends the full body once as numbered spans and resolves returned citations before persistence',async()=>{
+ const env={LLM_API_KEY:'test',LLM_BASE_URL:'https://provider.test',LLM_MODEL:'test'};
+ const r=await analyzeArticles([a,b],env,async(_,init)=>{
+   const messages=JSON.parse(init.body).messages,input=JSON.parse(messages[1].content);
+   assert.equal(input.articles[0].content,undefined);assert.equal(input.articles[0].passages[0].text,'模型 A 提供两种部署规模。');assert.match(messages[0].content,/只返回 evidenceId/);
+   return Response.json({choices:[{message:{content:JSON.stringify({...result,facts:[{text:'提供两种规模',status:'来源一致',sources:['a1','a2'],evidenceId:'s0.0'}]})}}]});
+ });assert.equal(r.facts[0].evidence,'模型 A 提供两种部署规模。');assert.equal(r.facts[0].evidenceId,undefined);
 });
