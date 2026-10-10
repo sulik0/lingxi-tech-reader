@@ -1,2 +1,2 @@
-import AutomationPanel from '../components/automation-panel';
-export default function Home(){return <AutomationPanel/>;}
+import FeedWorkspace from '../components/feed-workspace';
+export default function Home(){return <FeedWorkspace/>;}

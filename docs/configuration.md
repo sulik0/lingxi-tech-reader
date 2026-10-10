@@ -34,7 +34,7 @@ Jev 使用独立的结构化判断接口；密钥、版本和行为见[搜集要
 
 服务需要兼容 Chat Completions（聊天补全接口），接受 `messages`、`model`、`temperature`、`max_tokens` 和 `response_format: {type: "json_object"}`，并在 `choices[0].message.content` 中返回 JSON 字符串。当前请求使用 `temperature: 0.2`、`max_tokens: 6500`，不依赖厂商 SDK；仅针对 DeepSeek 设置 thinking disabled，详见[自动订阅](automation.md)。
 
-后台自动处理或用户点击“检索并生成报告”时，Worker 会发送当前请求中的文章 ID、标题、来源、作者和完整正文。链接不参与抓取或外部查证。请求限制和结果格式见[分析接口](implementation.md#分析接口)。
+后台自动处理或用户在设置中点击“检查新资讯并分析”时，Worker 会发送当前请求中的文章 ID、标题、来源、作者和完整正文。链接不参与抓取或外部查证。请求限制和结果格式见[分析接口](implementation.md#分析接口)。
 
 ## 怎样确认配置生效
 

@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
 import './globals.css';
-export const metadata:Metadata={title:'灵析 · 科技聚合报告',description:'检索科技订阅，合并重复资讯，生成有事实、观点和原文链接的聚合报告，并推送飞书。',icons:{icon:'/favicon.svg'}};
+import './feed.css';
+export const metadata:Metadata={title:'灵析 · 个人科技信息流',description:'阅读聚合科技资讯，用自然语言调整偏好，查看飞书与企业微信机器人推送状态。',icons:{icon:'/favicon.svg'}};
 export default function RootLayout({children}:Readonly<{children:React.ReactNode}>){return <html lang="zh-CN"><body>{children}</body></html>}
