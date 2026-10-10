@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
-import {parseFeed,feedURL,fetchFeed,hash} from '../lib/automation/feeds.ts';
+import {plainText,parseFeed,feedURL,fetchFeed,hash} from '../lib/automation/feeds.ts';
 import {beijingSchedule,validateSettings,defaultSettings} from '../lib/automation/types.ts';
 import {AutomationStore} from '../lib/automation/store.ts';
-import {validateGroups} from '../lib/automation/digest.ts';
-import {deliveryPayload,sendDelivery,feishuSignature,truncateBytes} from '../lib/automation/delivery.ts';
+import {clusterArticles,validateGroups} from '../lib/automation/digest.ts';
+import {robotBrief,deliveryPayload,sendDelivery,feishuSignature,truncateBytes} from '../lib/automation/delivery.ts';
 import {runAutomation} from '../lib/automation/runner.ts';
 import {processEvents,renderEvents} from '../lib/automation/events.ts';
 import {invalidateEvent} from '../lib/event-state.ts';
@@ -185,4 +185,23 @@ test('temporary source outage does not prevent retrying an already frozen email 
  const DB=d1(),store=new AutomationStore(DB),environment=env(DB),calls=[];await store.addSource(source);await store.saveSettings({enabled:true,sendTime:'08:00',emailTo:'reader@example.test',channels:{email:true,wecom:false,feishu:false}});
  await runAutomation({...environment,EMAIL_FROM:undefined},'scheduled',now,mockFetch(calls));const body=(await store.digest('2026-10-09')).body;
  await runAutomation(environment,'scheduled',now+900000,mockFetch(calls,{feedFails:true}));assert.equal(calls.length,1);assert.equal((await store.digest('2026-10-09')).body,body);assert.equal((await store.deliveries())[0].status,'sent');DB.close();
+});
+
+test('roundups stay separate from specific events and keep their label in robot messages',async()=>{
+  const base=(await parseFeed(rss(),source,now))[0];
+  const roundup={...base,id:'roundup',title:'IT早报：自编的三条资讯',content:'1. 模型发布\n2. 手机预约\n3. 公司收购\n'+content};
+  const other={...base,id:'other',title:'另一模型发布'};let calls=0;
+  const groups=await clusterArticles([base,other,roundup],env(),async(url,init)=>{
+    calls++;const input=JSON.parse(JSON.parse(init.body).messages[1].content);assert.deepEqual(input.map(a=>a.id),[base.id,other.id]);
+    return Response.json({choices:[{message:{content:JSON.stringify({groups:[{ids:[base.id,other.id]}]})}}]});
+  });assert.equal(calls,1);assert.deepEqual(groups.at(-1).map(a=>a.id),['roundup']);
+  const body=renderEvents('2026-10-09',[{...modelResult([roundup]),articleKind:'roundup',articles:[{...roundup,score:70,reason:'自编理由'}]}],[]);
+  assert.match(body,/综合资讯（多主题）/);assert.match(robotBrief(body),/综合资讯（多主题）/);assert.match(robotBrief(body),/新增本地部署功能/);
+  assert.equal(plainText('<p>A &mdash; B &hellip;</p>'),'A — B …');
+});
+test('manual reanalysis preserves a useful analysis error instead of a generic server failure',async()=>{
+  const DB=d1(),store=new AutomationStore(DB);await store.addSource(source);await store.addArticles(source.id,await parseFeed(rss(),source,now));
+  await processEvents(store,{},now);const [event]=await store.events();
+  const response=await handleAutomation(new Request('https://site.test/api/automation/events/'+event.id+'/analyze',{method:'POST',headers:{Authorization:'Bearer '+env(DB).AUTOMATION_TOKEN,origin:'https://site.test','content-type':'application/json'},body:'{}'}),{...env(DB),LLM_API_KEY:undefined});
+  assert.equal(response.status,503);assert.match((await response.json()).message,/AI 服务尚未配置/);assert.equal((await store.events())[0].pending,true);DB.close();
 });

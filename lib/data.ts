@@ -1,6 +1,6 @@
 export type Article = {id:string;publishedAt?:number;title:string;source:string;author:string;time:string;content:string;url?:string;score?:number;metrics?:number[];hype?:string;duplicate?:number;reason?:string;extra?:string;flags?:string[]};
 export type Fact = {text:string;status:'已核验'|'来源一致'|'待核验';sources:string[];evidence:string};
-export type EventItem = {id:string;updatedAt?:number;automatic?:boolean;groupingLocked?:boolean;recommendedArticleId?:string;title:string;category:string;tag:string;time:string;minutes:number;color:string;summary:string;points:string[];facts:Fact[];opinions:{author:string;source:string;view:string;basis:string}[];articles:Article[];conclusion:string;uncertainty:string;demo:boolean;pending?:boolean};
+export type EventItem = {articleKind?:'event'|'roundup';id:string;updatedAt?:number;automatic?:boolean;groupingLocked?:boolean;recommendedArticleId?:string;title:string;category:string;tag:string;time:string;minutes:number;color:string;summary:string;points:string[];facts:Fact[];opinions:{author:string;source:string;view:string;basis:string}[];articles:Article[];conclusion:string;uncertainty:string;demo:boolean;pending?:boolean};
 const names=['模型观察室','技术手记','科技速递','AI 前沿站','未来研究所','产品沉思录'];
 export const sources=names.map((name,i)=>({id:String(i),name,desc:['模型测评与技术解读','一手实践与深度分析','科技新闻与行业动态','人工智能产品观察','前沿研究与产业趋势','产品体验与商业观察'][i],initial:['M','技','科','AI','未','产'][i],color:['#5773bd','#35896e','#cd9340','#9259a4','#477887','#cc6c58'][i],enabled:true}));
 function articles(topic:string,kind:number):Article[]{return [

@@ -1,4 +1,4 @@
-import { analyzeArticles } from '../analyze.ts';
+import { isRoundup } from '../roundup.ts';
 import { AutomationError, type AutomationEnv, type CollectedArticle } from './types.ts';
 import { readLimited } from './feeds.ts';
 export function validateGroups(raw:unknown,articles:CollectedArticle[]) {
@@ -14,7 +14,9 @@ export function validateGroups(raw:unknown,articles:CollectedArticle[]) {
   if(seen.size!==known.size)throw new AutomationError('模型分组遗漏了文章。',502);
   return result;
 }
-export async function clusterArticles(articles:CollectedArticle[],env:AutomationEnv,fetcher:typeof fetch=fetch) {
+export async function clusterArticles(articles:CollectedArticle[],env:AutomationEnv,fetcher:typeof fetch=fetch):Promise<CollectedArticle[][]> {
+  const roundups=articles.filter(isRoundup);
+  if(roundups.length){const others=articles.filter(a=>!isRoundup(a));return [...(others.length?await clusterArticles(others,env,fetcher):[]),...roundups.map(a=>[a])];}
   if(articles.length===1)return [articles];
   if(!env.LLM_API_KEY||!env.LLM_BASE_URL||!env.LLM_MODEL)throw new AutomationError('每日总结需要先配置模型服务。',503);
   let base:URL;try{base=new URL(env.LLM_BASE_URL);if(base.protocol!=='https:'||base.username||base.password||base.search||base.hash)throw Error();}catch{throw new AutomationError('模型服务地址无效。',503);}

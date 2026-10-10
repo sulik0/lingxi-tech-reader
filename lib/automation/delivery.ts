@@ -20,7 +20,8 @@ export function robotBrief(body:string) {
     const recommendation=lines[recommendationIndex];
     const reason=recommendationIndex>=0&&!lines[recommendationIndex+1]?.startsWith('原文：')?lines[recommendationIndex+1]:'';
     const url=lines.find(line=>line.startsWith('原文：'));
-    return [lines[0],lines[1]||'',recommendation||'',reason||'',url||''].filter(Boolean).join('\n');
+    const summary=lines[1]?.startsWith('综合资讯（多主题）')?lines.slice(1,3).join('\n'):lines[1]||'';
+    return [lines[0],summary,recommendation||'',reason||'',url||''].filter(Boolean).join('\n');
   });
   return [overview,...events].join('\n\n');
 }

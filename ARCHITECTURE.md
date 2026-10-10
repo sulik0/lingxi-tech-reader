@@ -8,7 +8,7 @@ Cloudflare Worker 负责采集、分析和发送，D1 保存来源、文章、�
 | --- | --- |
 | `lib/automation/feeds.ts` | 校验来源地址，解析 RSS/Atom，清理正文和跟踪参数。 |
 | `lib/automation/store.ts`、`db/schema.ts`、`drizzle/` | 保存文章、事件、发送队列、历史记录和任务锁。 |
-| `lib/automation/digest.ts` | 用模型按具体事件分组，检查 ID 是否完整且不重复。 |
+| `lib/roundup.ts`、`lib/automation/digest.ts` | 将明确的多主题早报单独保留，其他文章由模型按具体事件分组，检查 ID 是否完整且不重复。 |
 | `lib/automation/events.ts` | 比较新报道和近期事件，分析正文，保存统一事件，并把这些事件排成每日简报。 |
 | `lib/analyze.ts` | 调用模型，检查正文引文、评分与推荐文章 ID；提供八类分析结果。 |
 | `lib/automation/runner.ts` | 执行采集、事件更新、每日冻结简报和发送，保留错误。 |

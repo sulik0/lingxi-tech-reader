@@ -1,5 +1,5 @@
 import { invalidateEvent } from '../event-state.ts';
-import { analyzeArticles } from '../analyze.ts';
+import { AnalysisError, analyzeArticles } from '../analyze.ts';
 import { AutomationStore } from './store.ts';
 import { feedURL } from './feeds.ts';
 import { channelReady } from './delivery.ts';
@@ -57,5 +57,5 @@ export async function handleAutomation(request:Request,env:AutomationEnv) {
     const id=path.match(/^\/sources\/([a-zA-Z0-9-]{1,80})$/)?.[1];
     if(id){if(request.method==='DELETE'){await store.deleteSource(id);return json({message:'已停止监听并删除来源配置；已采集文章和历史事件仍保留。'});}if(request.method==='PATCH'&&typeof body?.enabled==='boolean'){await store.toggleSource(id,body.enabled);return json({message:'来源状态已更新。'});}}
     throw new AutomationError('接口不存在。',404);
-  }catch(e){return json({message:e instanceof AutomationError?e.message:'后台操作失败。请确认数据库已迁移，再检查服务端日志和配置。'},e instanceof AutomationError?e.status:500);}
+  }catch(e){return json({message:(e instanceof AutomationError||e instanceof AnalysisError)?e.message:'后台操作失败。请确认数据库已迁移，再检查服务端日志和配置。'},(e instanceof AutomationError||e instanceof AnalysisError)?e.status:500);}
 }

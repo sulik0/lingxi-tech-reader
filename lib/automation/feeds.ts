@@ -13,7 +13,7 @@ export function feedURL(value:string,allowedHosts:string):string {
   return u.href;
 }
 export function plainText(html:string) {
-  const decoded=html.replace(/&#(x[0-9a-f]+|\d+);/gi,(_,n:string)=>{const point=n[0].toLowerCase()==='x'?parseInt(n.slice(1),16):Number(n);return point>0&&point<=0x10ffff?String.fromCodePoint(point):'';}).replace(/&(nbsp|amp|lt|gt|quot|apos);/g,(_,name:string)=>({nbsp:' ',amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"}[name]||''));
+  const decoded=html.replace(/&#(x[0-9a-f]+|\d+);/gi,(_,n:string)=>{const point=n[0].toLowerCase()==='x'?parseInt(n.slice(1),16):Number(n);return point>0&&point<=0x10ffff?String.fromCodePoint(point):'';}).replace(/&(nbsp|amp|lt|gt|quot|apos|mdash|ndash|hellip|lsquo|rsquo|ldquo|rdquo|bull|copy|reg);/g,(_,name:string)=>({nbsp:' ',amp:'&',lt:'<',gt:'>',quot:'"',apos:"'",mdash:"—",ndash:"–",hellip:"…",lsquo:"‘",rsquo:"’",ldquo:"“",rdquo:"”",bull:"•",copy:"©",reg:"®"}[name]||''));
   return decoded.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi,'').replace(/<\/(p|div|li|h[1-6])>|<br\s*\/?\s*>/gi,'\n').replace(/<[^>]+>/g,'').replace(/[ \t]+/g,' ').replace(/\n\s*\n/g,'\n\n').trim();
 }
 

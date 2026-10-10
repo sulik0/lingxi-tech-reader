@@ -1,3 +1,4 @@
+import {isRoundup} from '../roundup.ts';
 import {analyzeArticles, configured} from '../analyze.ts';
 import type {EventItem} from '../data.ts';
 import {AutomationStore} from './store.ts';
@@ -6,7 +7,7 @@ import {hash} from './feeds.ts';
 import type {AutomationEnv,CollectedArticle} from './types.ts';
 const toArticle=(a:CollectedArticle)=>({...a,time:new Date(a.publishedAt).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'})});
 export function pendingEvent(articles:CollectedArticle[],now:number,id=articles[0].id):EventItem {
-  return {id,automatic:true,updatedAt:now,title:articles[0].title,category:'科技资讯',tag:'自动采集',time:new Date(now).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'}),minutes:3,color:'#edf5ee',summary:'已自动采集正文，等待模型分析。',points:[],facts:[],opinions:[],articles:articles.map(toArticle),conclusion:'尚未完成分析，暂不推荐文章。',uncertainty:'正文来自订阅源，尚未独立核实。',demo:false,pending:true};
+  return {articleKind:articles.length===1&&isRoundup(articles[0])?'roundup':undefined,id,automatic:true,updatedAt:now,title:articles[0].title,category:'科技资讯',tag:'自动采集',time:new Date(now).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'}),minutes:3,color:'#edf5ee',summary:'已自动采集正文，等待模型分析。',points:[],facts:[],opinions:[],articles:articles.map(toArticle),conclusion:'尚未完成分析，暂不推荐文章。',uncertainty:'正文来自订阅源，尚未独立核实。',demo:false,pending:true};
 }
 export async function publishCollectedEvents(store:AutomationStore,now:number) {
   // One collection reads at most 10 sources × 50 articles. Existing analysis stays intact.
@@ -24,7 +25,7 @@ export async function processEvents(store:AutomationStore,env:AutomationEnv,now:
   // Reconsider recent events along with new reports. Never discard an event's hidden articles.
   const candidates:CollectedArticle[]=[];
   const incomingIDs=new Set(incoming.map(a=>a.id));
-  for(const event of existing.filter(e=>!e.groupingLocked&&now-(e.updatedAt||0)<48*3600000)) {
+  for(const event of existing.filter(e=>!e.groupingLocked&&e.articleKind!=='roundup'&&now-(e.updatedAt||0)<48*3600000)) {
     if(event.articles.length+candidates.length>6)continue;
     for(const a of event.articles)if(!incomingIDs.has(a.id))candidates.push({...a,url:a.url||'',publishedAt:a.publishedAt||event.updatedAt||now,collectedAt:event.updatedAt||now,contentHash:await hash(a.content.replace(/\s+/g,''))});
   }
@@ -62,10 +63,10 @@ export async function processEvents(store:AutomationStore,env:AutomationEnv,now:
   return outputs.filter(e=>e.pending&&e.articles.some(a=>a.content.length>=80)).map(e=>e.title+'：'+e.uncertainty);
 }
 export function renderEvents(date:string,events:EventItem[],failures:string[],remaining=false) {
-  const lines=[`# 灵析每日科技简报 · ${date}`,'','依据订阅源正文整理；多个来源提及不代表已经独立核实。',`本次整理 ${events.length} 个事件。`];
+  const lines=[`# 灵析每日科技简报 · ${date}`,'','依据订阅源正文整理；多个来源提及不代表已经独立核实。',`本次整理 ${events.length} 条资讯。`];
   if(remaining)lines.push('还有文章等待后续处理，不会静默丢弃；本次简报不是全部资讯。');
   if(failures.length)lines.push('部分来源读取失败：'+failures.join('；'));
-  for(const e of events){const best=e.articles.find(a=>a.id===e.recommendedArticleId)||e.articles.filter(a=>a.score!==undefined).sort((a,b)=>(b.score||0)-(a.score||0))[0];lines.push('',`## ${e.title}`,e.summary,...e.points.map(p=>'- '+p),'','事实与依据：',...e.facts.map(f=>`- ${f.text}（${f.status==='来源一致'?'多个来源提及，尚未独立核实':'待核实'}）\n  原句：${f.evidence}`),'','作者观点：',...e.opinions.map(o=>`- ${o.source}：${o.view}（${o.basis}）`),'','文章提供的新信息：',...e.articles.map(a=>`- ${a.title}：${a.extra||'仅有摘要或尚未分析'}${a.duplicate!==undefined?`；重复度 ${a.duplicate}%`:''}${a.flags?.length?'；'+a.flags.join('；'):''}`),...(best?[`推荐阅读：${best.title}`,best.reason||'',`原文：${best.url||''}`]:['没有足够正文，暂不推荐文章。',...e.articles.map(a=>`原文：${a.url||''}`)]),`阅读建议：${e.conclusion}`,`尚不确定：${e.uncertainty}`);}
+  for(const e of events){const best=e.articles.find(a=>a.id===e.recommendedArticleId)||e.articles.filter(a=>a.score!==undefined).sort((a,b)=>(b.score||0)-(a.score||0))[0];lines.push('',`## ${e.title}`,...(e.articleKind==='roundup'?['综合资讯（多主题）：以下内容来自一篇汇总文章，不代表同一个事件。']:[]),e.summary,...e.points.map(p=>'- '+p),'','事实与依据：',...e.facts.map(f=>`- ${f.text}（${f.status==='来源一致'?'多个来源提及，尚未独立核实':'待核实'}）\n  原句：${f.evidence}`),'','作者观点：',...e.opinions.map(o=>`- ${o.source}：${o.view}（${o.basis}）`),'','文章提供的新信息：',...e.articles.map(a=>`- ${a.title}：${a.extra||'仅有摘要或尚未分析'}${a.duplicate!==undefined?`；重复度 ${a.duplicate}%`:''}${a.flags?.length?'；'+a.flags.join('；'):''}`),...(best?[`推荐阅读：${best.title}`,best.reason||'',`原文：${best.url||''}`]:['没有足够正文，暂不推荐文章。',...e.articles.map(a=>`原文：${a.url||''}`)]),`阅读建议：${e.conclusion}`,`尚不确定：${e.uncertainty}`);}
   if(!events.length)lines.push('本次没有尚未发送的新事件。');
   return lines.join('\n');
 }
