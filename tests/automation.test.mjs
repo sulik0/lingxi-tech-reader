@@ -1,5 +1,5 @@
 import {defaultPolicy,parseLocalInstruction,parseInstruction,matchPolicy,policyKey,validatePolicy} from '../lib/automation/policy.ts';
-import {screenArticles} from '../lib/automation/jev.ts';
+import {screenArticles,checkScreening} from '../lib/automation/jev.ts';
 import {filterArticles} from '../lib/automation/screening.ts';
 import {meteredFetch} from '../lib/automation/meter.ts';
 import test from 'node:test';
@@ -378,4 +378,18 @@ test('complex natural language uses one explicit parsing request and validates t
  let calls=0;const result=await parseInstruction('希望多看一些有技术细节的 AI 文章，不想看汽车报道',env(),async(url,init)=>{calls++;assert.equal(url,env().LLM_BASE_URL+'/chat/completions');assert.equal(init.redirect,'manual');assert.equal(JSON.parse(init.body).max_tokens,1600);return Response.json({choices:[{message:{content:JSON.stringify({include:['AI'],exclude:['汽车']})}}]});});assert.deepEqual(result.include,['AI']);assert.deepEqual(result.exclude,['汽车']);assert.equal(calls,1);
  await assert.rejects(parseInstruction('希望多看一些有技术细节的文章',env(),async()=>Response.json({choices:[{message:{content:'null'}}]})),/有效关键词/);
  assert.equal(await policyKey({...defaultPolicy,include:['AI','芯片']},{}),await policyKey({...defaultPolicy,include:['芯片','AI']},{}));
+});
+
+test('Jev connection check sends one synthetic article and reports regional rejection clearly',async()=>{
+ let calls=0;const environment={JEV_API_KEY:'test'};const result=await checkScreening(environment,async(url,init)=>{calls++;const body=JSON.parse(init.body);assert.equal(body.state.articles.length,1);assert.match(body.state.articles[0].excerpt,/自编/);return jevResponse(body);});assert.equal(result.connected,true);assert.equal(calls,1);
+ await assert.rejects(checkScreening(environment,async()=>new Response('secret',{status:451})),e=>/地区不可用/.test(e.message)&&!e.message.includes('secret'));await assert.rejects(checkScreening({},async()=>{throw Error('unexpected')}),/尚未配置/);
+});
+test('Jev connection API is protected, records usage, releases its lock and never creates content or deliveries',async()=>{
+ const DB=d1(),store=new AutomationStore(DB),environment={...env(DB),JEV_API_KEY:'test-jev'},origin='https://site.test',url=origin+'/api/automation/screening/check';let calls=0;
+ const originalFetch=globalThis.fetch;globalThis.fetch=async(_,init)=>{calls++;return jevResponse(JSON.parse(init.body));};
+ try {
+   const headers={Authorization:'Bearer '+environment.AUTOMATION_TOKEN,origin,'Content-Type':'application/json'};
+   assert.equal((await handleAutomation(new Request(url,{method:'POST',headers:{...headers,origin:'https://evil.test'},body:'{}'}),environment)).status,403);assert.equal(calls,0);
+   const response=await handleAutomation(new Request(url,{method:'POST',headers,body:'{}'}),environment);assert.equal(response.status,200);assert.equal((await response.json()).connected,true);assert.equal(calls,1);assert.equal(await store.busy(Date.now()),false);assert.equal((await store.usage(0))[0].stage,'screen_check');assert.equal((await store.deliveries()).length,0);assert.equal((await store.digests()).length,0);assert.equal((await store.events()).length,0);
+ }finally{globalThis.fetch=originalFetch;DB.close();}
 });

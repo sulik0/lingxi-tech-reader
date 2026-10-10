@@ -1,3 +1,4 @@
+import {checkScreening} from './jev.ts';
 import {parseInstruction,validatePolicy,screeningEnv} from './policy.ts';
 import {meteredFetch} from './meter.ts';
 import { invalidateEvent } from '../event-state.ts';
@@ -35,6 +36,10 @@ export async function handleAutomation(request:Request,env:AutomationEnv) {
     if(!request.headers.get('content-type')?.includes('application/json'))throw new AutomationError('需要 JSON 正文。',415);
     const raw=await request.text();if(raw.length>8000)throw new AutomationError('设置内容过大。',413);
     let body:any;try{body=JSON.parse(raw);}catch{throw new AutomationError('设置不是有效 JSON。');}
+    if(path==='/screening/check'&&request.method==='POST'){
+      const holder=await store.acquire(Date.now());if(!holder)throw new AutomationError('已有后台任务在运行，请稍后检查 Jev。',409);
+      try{return json(await checkScreening(env,meteredFetch(fetch,store,'screen_check')));}finally{await store.release(holder);}
+    }
     if(path==='/policy/parse'&&request.method==='POST')return json(await parseInstruction(body.instruction,env,meteredFetch(fetch,store,'policy')));
     if(path==='/policy'&&request.method==='PATCH'){
       const policy=validatePolicy(body),holder=await store.acquire(Date.now());if(!holder)throw new AutomationError('后台任务正在运行，请稍后保存要求。',409);
