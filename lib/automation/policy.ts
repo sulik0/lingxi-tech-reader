@@ -12,7 +12,7 @@ export function validatePolicy(value:unknown):CollectionPolicy {
   const p=value as CollectionPolicy;
   const terms=(v:unknown)=>Array.isArray(v)&&v.length<=20&&v.every(s=>typeof s==='string'&&s.trim().length>0&&s.length<=60);
   if(!p||typeof p.instruction!=='string'||p.instruction.length>500||!terms(p.include)||!terms(p.exclude)||typeof p.screenEnabled!=='boolean'||!Number.isInteger(p.minValue)||p.minValue<0||p.minValue>100||!Number.isInteger(p.deepLimit)||p.deepLimit<1||p.deepLimit>6)throw new AutomationError('搜集策略无效：关键词最多各 20 个，初筛分数为 0–100，每轮完整分析 1–6 个事件。');
-  const clean=(a:string[])=>[...new Set(a.map(s=>s.trim()))];return {instruction:p.instruction.trim(),include:clean(p.include),exclude:clean(p.exclude),screenEnabled:p.screenEnabled,minValue:p.minValue,deepLimit:p.deepLimit};
+  const clean=(a:string[])=>[...new Set(a.map(s=>{const term=s.trim();return term==='人工智能'||term.toLowerCase()==='ai'?'AI':term;}))];return {instruction:p.instruction.trim(),include:clean(p.include),exclude:clean(p.exclude),screenEnabled:p.screenEnabled,minValue:p.minValue,deepLimit:p.deepLimit};
 }
 function terms(text:string):string[]{
   return text.replace(/^(?:只|仅)?(?:关注|关心|想看|看|包括|保留|要看|收集|搜集|检索|搜索)\s*/,'').split(/[,，、；;\n]|以及|和|与|还有/).map(s=>s.trim()).filter(Boolean).flatMap(s=>{

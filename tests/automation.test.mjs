@@ -318,7 +318,7 @@ test('collection requirements parse negation locally, expand topics and prioriti
  assert.equal(matchPolicy({title:'Claude 模型升级',content:''},p).keep,true);
  assert.equal(matchPolicy({title:'Daily newsletter',content:''},p).keep,false);
  let calls=0;const parsed=await parseInstruction('不关注汽车手机',{},async()=>{calls++;throw Error();});assert.equal(calls,0);assert.equal(parsed.method,'规则解析');
- assert.throws(()=>validatePolicy({...p,deepLimit:7}));
+ assert.throws(()=>validatePolicy({...p,deepLimit:7}));assert.deepEqual(validatePolicy({...defaultPolicy,include:['人工智能','ai','AI']}).include,['AI']);
 });
 test('Jev uses typed batch questions and short excerpts; uncertain scores are retained',async()=>{
  const a={...(await parseFeed(rss(),source,now))[0],content:content.repeat(20)},environment={JEV_API_KEY:'test-jev'};
