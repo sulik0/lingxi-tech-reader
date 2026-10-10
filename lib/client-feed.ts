@@ -1,10 +1,11 @@
 import type {EventItem} from './data';
 import {matchPolicy} from './automation/policy.ts';
 import type {CollectionPolicy} from './automation/policy';
-import type {Channel,Digest,FeedSource,Settings} from './automation/types';
+import type {Channel,Digest,FeedSource,Settings,ReportProgress} from './automation/types';
 
 export type Snapshot={policy:CollectionPolicy;settings:Settings;sources:FeedSource[];digests:Digest[];deliveries:{digest_id:string;channel:Channel;status:string;error:string;attempts:number;started_at?:number}[];services:Record<Channel|'model',boolean>;busy:boolean;suggestedFeeds:{name:string;url:string}[];screening?:{configured:boolean;model:string|null};usage?:{stage:string;model:string;calls:number;promptTokens:number|null;completionTokens:number|null;unknownCalls:number}[]};
-export type APIResult={message?:string;stage?:string;digestId?:string;failures?:string[]};
+export type ReportActivity={busy:boolean;report:{id:string;date:string;status:string;createdAt:number;error:string;details?:{progress?:ReportProgress}}|null};
+export type APIResult={message?:string;stage?:string;digestId?:string;failures?:string[];complete?:boolean;canContinue?:boolean;processed?:number};
 export type ClientRequest=<T=APIResult>(path:string,method?:string,body?:unknown,signal?:AbortSignal)=>Promise<T>;
 export type Bookmark={id:string;articles:string[]};
 export const bookmarkKey='lingxi:feed-bookmarks:v1';

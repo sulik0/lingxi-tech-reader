@@ -11,8 +11,11 @@ export async function screenArticles(articles:CollectedArticle[],policy:Collecti
     return articles.map((a,i)=>{const answer=raw.answers?.['a'+i];
       if(answer?.type!=='score'||!Number.isFinite(answer.score)||answer.score<0||answer.score>4||!Number.isFinite(answer.confidence)||answer.confidence<0||answer.confidence>1)throw Error();
       const probabilities=answer.probabilities;
-      if(!probabilities||Object.keys(probabilities).length!==5||[0,1,2,3,4].some(n=>!Number.isFinite(probabilities[n])||probabilities[n]<0||probabilities[n]>1)||Math.abs(Object.values(probabilities).reduce((sum:number,p:any)=>sum+p,0)-1)>0.01)throw Error();
-      if(Math.abs([0,1,2,3,4].reduce((sum,n)=>sum+n*probabilities[n],0)-answer.score)>0.02)throw Error();
+      // The HTTP provider rounds each probability and the score to two decimals.
+      // Five independent rounded values can differ from 1 by 5 * .005;
+      // their weighted sum can differ from the rounded score by (0+1+2+3+4)*.005+.005.
+      if(!probabilities||Object.keys(probabilities).length!==5||[0,1,2,3,4].some(n=>!Number.isFinite(probabilities[n])||probabilities[n]<0||probabilities[n]>1)||Math.abs(Object.values(probabilities).reduce((sum:number,p:any)=>sum+p,0)-1)>0.025+1e-9)throw Error();
+      if(Math.abs([0,1,2,3,4].reduce((sum,n)=>sum+n*probabilities[n],0)-answer.score)>0.055+1e-9)throw Error();
       const value=Math.round(answer.score*25),uncertain=answer.confidence<0.65;
       return {id:a.id,keep:uncertain||value>=policy.minValue,value,reason:uncertain?'初筛把握不足，保留给分析模型判断。':`Jev 阅读价值 ${value}/100，${value>=policy.minValue?'达到':'低于'}当前要求。`};
     });

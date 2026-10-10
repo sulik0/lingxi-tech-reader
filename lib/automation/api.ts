@@ -24,12 +24,24 @@ export async function handleAutomation(request:Request,env:AutomationEnv) {
     if(!await authorized(request,env.AUTOMATION_TOKEN))throw new AutomationError('请输入正确的管理口令。',401);
     const url=new URL(request.url);const path=url.pathname.replace('/api/automation','');
     const store=new AutomationStore(env.DB);
+    if(request.method==='GET'&&path==='/progress'){
+      const id=url.searchParams.get('reportId');if(id&&!/^report:[a-zA-Z0-9:-]{1,100}$/.test(id))throw new AutomationError('报告编号无效。');
+      const report=id?await store.digest(id):(await store.digests()).find(d=>d.details?.manual&&d.status==='generating')||(await store.digests()).find(d=>d.details?.manual);
+      if(report&&!report.details?.manual)throw new AutomationError('这不是手动报告。',404);
+      const details=report?.details;return json({busy:await store.busy(Date.now()),report:report?{id:report.id,date:report.date,status:report.status,error:report.error,createdAt:report.createdAt,details:details?{...details,scope:details.scope?{limited:details.scope.limited}:undefined}:undefined}:null});
+    }
     if(request.method==='GET'&&path==='/events')return json({events:await store.events()});
     if(request.method==='GET'&&path==='')return json({policy:await store.policy(),usage:await store.usage(),screening:{configured:!!screeningEnv(env),model:screeningEnv(env)?.model||null},settings:await store.settings(),sources:await store.sources(),digests:await store.digests(),deliveries:await store.deliveries(),busy:await store.busy(Date.now()),services:{model:!!(env.LLM_API_KEY&&env.LLM_BASE_URL&&env.LLM_MODEL),...channelReady(env)},suggestedFeeds,runs:await store.runs(),stats:await store.collectionStats()});
     if(!['POST','PATCH','DELETE'].includes(request.method))throw new AutomationError('请求方法不支持。',405);
     if(request.headers.get('origin')!==url.origin)throw new AutomationError('请从同一地址的工作台操作。',403);
     if(await store.busy(Date.now()))throw new AutomationError('后台任务正在运行，稍后再修改设置或来源。',409);
-    if(request.method==='POST'&&['/collect','/preview','/report','/run'].includes(path))return json(await runAutomation(env,path==='/collect'?'collect':path==='/preview'?'preview':path==='/report'?'report':'scheduled'));
+    if(request.method==='POST'&&path==='/report'){
+      const text=await request.text();if(text.length>500)throw new AutomationError('报告请求过大。');
+      let body:any={};try{if(text)body=JSON.parse(text);}catch{throw new AutomationError('报告请求不是有效 JSON。');}
+      if(!body||typeof body!=='object'||Array.isArray(body)||body.reportId!==undefined&&(typeof body.reportId!=='string'||!/^report:[a-zA-Z0-9:-]{1,100}$/.test(body.reportId)))throw new AutomationError('报告编号无效。');
+      return json(await runAutomation(env,'report',Date.now(),fetch,{reportId:body.reportId}));
+    }
+    if(request.method==='POST'&&['/collect','/preview','/run'].includes(path))return json(await runAutomation(env,path==='/collect'?'collect':path==='/preview'?'preview':'scheduled'));
     const encodedReportID=path.match(/^\/reports\/([^/]{1,320})\/send$/)?.[1];
     let reportID='';if(encodedReportID){try{reportID=decodeURIComponent(encodedReportID);}catch{throw new AutomationError('报告编号无效。');}if(!/^report:[a-zA-Z0-9:-]{1,100}$/.test(reportID))throw new AutomationError('报告编号无效。');}
     if(request.method==='POST'&&reportID)return json(await sendReport(env,reportID));

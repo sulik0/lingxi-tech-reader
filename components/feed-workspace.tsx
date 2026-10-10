@@ -4,7 +4,7 @@ import {Settings2,RefreshCw} from 'lucide-react';
 import type {EventItem} from '../lib/data';
 import type {CollectionPolicy} from '../lib/automation/policy';
 import {validatePolicy} from '../lib/automation/policy';
-import {bookmarkKey,eventMatches,isBookmarked,policyWithExclusions,readable,readBookmarks,terms,toggleBookmark,topic,visibleEvents,type APIResult,type Bookmark,type Snapshot} from '../lib/client-feed';
+import {bookmarkKey,eventMatches,isBookmarked,policyWithExclusions,readable,readBookmarks,terms,toggleBookmark,topic,visibleEvents,type APIResult,type Bookmark,type Snapshot,type ReportActivity} from '../lib/client-feed';
 import FeedPreferences,{PreferenceChanges} from './feed-preferences';
 import FeedItem from './feed-item';
 import FeedDialog from './feed-dialog';
@@ -16,6 +16,7 @@ export default function FeedWorkspace(){
  const [busy,setBusy]=useState(false),[reading,setReading]=useState(false),[readError,setReadError]=useState(''),[notice,setNotice]=useState(''),[noticeError,setNoticeError]=useState(false);
  const [settingsOpen,setSettingsOpen]=useState(false),[bookmarks,setBookmarks]=useState<Bookmark[]>([]),[storageError,setStorageError]=useState(''),[mode,setMode]=useState<'all'|'saved'>('all'),[limit,setLimit]=useState(20);
  const [reduce,setReduce]=useState<EventItem|null>(null),[reduction,setReduction]=useState(''),[reducePreview,setReducePreview]=useState<string[]|null>(null),[reduceError,setReduceError]=useState('');
+ const [reporting,setReporting]=useState(false),[reportActivity,setReportActivity]=useState<ReportActivity|null>(null);const reportStarted=useRef(0),reportTarget=useRef('');
  const api=useCallback(async<T=APIResult>(path:string,method='GET',body?:unknown,signal?:AbortSignal,credentialOverride?:string):Promise<T>=>{
    let response:Response;
    try{response=await fetch('/api/automation'+path,{method,signal:signal?AbortSignal.any([signal,AbortSignal.timeout(30000)]):AbortSignal.timeout(path==='/report'?360000:path==='/collect'?120000:30000),headers:{Authorization:'Bearer '+(credentialOverride??token.current),...(body!==undefined?{'Content-Type':'application/json'}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{})});}catch(e){if(e instanceof Error&&e.name==='TimeoutError')throw Error('等待响应超时，请刷新查看后台结果。推送超时后请先检查群消息。');throw e;}
@@ -35,17 +36,25 @@ export default function FeedWorkspace(){
  },[api]);
  useEffect(()=>{try{setBookmarks(readBookmarks(localStorage.getItem(bookmarkKey)));}catch{setStorageError('无法读取收藏：浏览器存储不可用或记录格式不完整。请检查浏览器设置后刷新。');}return()=>{revision.current++;controller.current?.abort();};},[]);
  useEffect(()=>{if(!connected)return;const timer=setInterval(()=>{if(!busyRef.current&&!controller.current?.signal.aborted)void refresh();},60000);return()=>clearInterval(timer);},[connected,refresh]);
+ useEffect(()=>{if(!connected||!reporting&&!data?.busy)return;const abort=new AbortController();let timer:ReturnType<typeof setTimeout>;const poll=async()=>{try{const result=await api<ReportActivity>('/progress'+(reportTarget.current?'?reportId='+encodeURIComponent(reportTarget.current):''),'GET',undefined,abort.signal);if(!abort.signal.aborted&&(result.report?.status==='generating'||result.report?.id===reportTarget.current||reporting&&result.report&&result.report.createdAt>=reportStarted.current))setReportActivity(result);}catch(e){if(!abort.signal.aborted)setNotice('进度暂时读取失败；任务可能仍在运行，请勿重复创建报告。');}finally{if(!abort.signal.aborted)timer=setTimeout(poll,3000);}};void poll();return()=>{abort.abort();clearTimeout(timer);};},[connected,reporting,data?.busy,api]);
  const run=async<T,>(task:()=>Promise<T>):Promise<T>=>{if(busyRef.current)throw Error('正在处理上一次操作，请稍后重试。');busyRef.current=true;setBusy(true);try{return await task();}finally{busyRef.current=false;setBusy(false);}};
  const savePolicy=async(policy:CollectionPolicy)=>run(async()=>{
    const fresh=await api<Snapshot>('');if(data&&JSON.stringify(fresh.policy)!==JSON.stringify(data.policy)){setData(fresh);throw Error('后台偏好已变更，请重新检查预览后保存。');}
    const p=validatePolicy(policy);await api('/policy','PATCH',p);setData(d=>d?{...d,policy:p}:d);await refresh();setLimit(20);
  });
- const generate=async()=>run(async()=>{
+ const generate=async(reportId?:string)=>run(async()=>{
    try{
-   setNotice('正在检查订阅来源…');setNoticeError(false);const collection=await api('/collect','POST');if(collection.stage==='busy')throw Error(collection.message||'后台正在运行。');
-   setNotice('正在合并资讯并分析；未完成的文章会保留待处理。');const report=await api('/report','POST');if(report.stage==='busy')throw Error(report.message||'后台正在运行。');
-   await refresh();setNotice((report.message||'请查看实际处理结果。')+(collection.failures?.length?` ${collection.failures.length} 个来源读取失败，资讯范围可能不完整。`:''));setNoticeError(!!collection.failures?.length);return report.digestId;
-   }catch(e){setNotice(errorText(e));setNoticeError(true);throw e;}
+   reportStarted.current=Date.now();reportTarget.current=reportId||'';setReporting(true);setReportActivity(null);setNoticeError(false);
+   let collection:APIResult={};if(!reportId){setNotice('正在检查订阅来源…');collection=await api('/collect','POST');if(collection.stage==='busy')throw Error(collection.message||'后台正在运行。');}
+   let report:APIResult={},id=reportId,processed=-1;
+   for(let batch=0;batch<3;batch++){
+     setNotice(`正在处理第 ${batch+1} 批；每批最多分析 ${data?.policy.deepLimit||6} 个事件，不会发送消息。`);
+     report=await api('/report','POST',id?{reportId:id}:{});if(report.stage==='busy')throw Error(report.message||'后台正在运行。');id=report.digestId;reportTarget.current=id||'';
+     const activity=await api<ReportActivity>('/progress'+(id?'?reportId='+encodeURIComponent(id):''));setReportActivity(activity);
+     if(!id||report.complete||!report.canContinue||(report.processed??0)<=processed)break;processed=report.processed??0;
+   }
+   await refresh();setNotice((report.message||'请查看实际处理结果。')+(!report.complete&&report.canContinue?' 本次最多连续处理 3 批，请点击“继续这份报告”处理剩余文章。':'')+(collection.failures?.length?` ${collection.failures.length} 个来源读取失败，资讯范围可能不完整。`:''));setNoticeError(!!collection.failures?.length||!!report.failures?.length);return id;
+   }catch(e){setNotice(errorText(e));setNoticeError(true);await refresh();throw e;}finally{setReporting(false);}
  });
  const disconnect=()=>{revision.current++;controller.current?.abort();token.current='';setConnected(false);setData(null);setEvents([]);setLoadedEvents(false);setCredential('');setSettingsOpen(false);setReduce(null);setReadError('');setReading(false);setNotice('');setMode('all');};
  const locked=busy||!!data?.busy;
@@ -71,7 +80,7 @@ export default function FeedWorkspace(){
  {filtered.length>limit&&<button className="feed-secondary feed-more" onClick={()=>setLimit(n=>n+20)}>再显示 20 条</button>}{pending>0&&<p className="feed-pending">{pending} 条资讯仍待分析，尚未显示。<button className="feed-text" onClick={openSettings}>继续处理</button></p>}
  </section>}
  </main><footer className="feed-footer">依据来源正文整理，尚未独立核实。需要深入了解时，再打开原文。</footer>
- <FeedDialog open={settingsOpen} onOpenChange={setSettingsOpen} returnFocus={returnFocus} title="设置" description="管理机器人推送，按需维护来源与查看报告。">{data&&settingsOpen?<FeedSettings data={data} locked={locked} request={api} refresh={refresh} generate={generate} savePolicy={savePolicy} disconnect={disconnect}/>:<p className="feed-help">请先关闭设置，在首页输入管理口令连接。</p>}</FeedDialog>
+ <FeedDialog open={settingsOpen} onOpenChange={setSettingsOpen} returnFocus={returnFocus} title="设置" description="管理机器人推送，按需维护来源与查看报告。">{data&&settingsOpen?<FeedSettings data={data} locked={locked} request={api} refresh={refresh} generate={generate} reportActivity={reportActivity} reportStatus={notice} reporting={reporting} savePolicy={savePolicy} disconnect={disconnect}/>:<p className="feed-help">请先关闭设置，在首页输入管理口令连接。</p>}</FeedDialog>
  <FeedDialog open={!!reduce} onOpenChange={open=>{if(!open)setReduce(null);}} returnFocus={returnFocus} title="减少类似内容" description="确认后将不再展示命中该主题的资讯。你可以在偏好中移除关键词，恢复显示。">{reduce&&data&&<><p className="reduce-title">{reduce.title}</p><label className="feed-field">要减少的主题<input name="reduceTopic" autoComplete="off" maxLength={1200} value={reduction} disabled={locked} onChange={e=>{setReduction(e.target.value);setReducePreview(null);setReduceError('');}} placeholder="例如：汽车"/></label><button className="feed-secondary" disabled={locked||!terms(reduction).length} onClick={()=>{try{const words=terms(reduction);validatePolicy(policyWithExclusions(data.policy,words));setReducePreview(words);}catch(e){setReduceError(errorText(e));}}}>预览变更</button>{reductionPolicy&&<div className="preference-preview"><PreferenceChanges before={data.policy} after={reductionPolicy}/><p className="feed-help">当前列表有 {affected} 条资讯将不再显示。不会删除原文章或重新采集。</p><div className="feed-actions"><button className="feed-secondary" disabled={locked} onClick={()=>setReduce(null)}>取消</button><button className="feed-primary" disabled={locked} onClick={()=>void savePolicy(reductionPolicy).then(()=>{setReduce(null);setNotice('偏好已保存，类似内容已按关键词过滤。');setNoticeError(false);}).catch(e=>setReduceError(errorText(e)))}>确认保存</button></div></div>}{reduceError&&<p className="feed-error" role="alert">{reduceError} 偏好未保存。</p>}</>}</FeedDialog>
  </div>;
 }

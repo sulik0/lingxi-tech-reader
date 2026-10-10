@@ -63,3 +63,7 @@ body{background:#fff;color:var(--feed-ink);font-family:"PingFang SC","Noto Sans 
 @media(prefers-reduced-motion:reduce){.feed-workspace *,.feed-modal *{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 
 .settings-feedback{position:sticky;top:-24px;background:#fff;z-index:2}.settings-feedback:empty{display:none}.settings-feedback .feed-help,.settings-feedback .feed-notice,.settings-feedback .feed-error{padding:12px 0;margin:0}
+
+.feed-report-progress{border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;padding:14px 0;margin:16px 0;font-size:14px;overflow-wrap:anywhere}.feed-report-progress p{margin:8px 0;line-height:1.6}.feed-report-progress progress{display:block;width:100%;height:6px;accent-color:#1d4ed8}.feed-report-progress small{display:block;color:#616161;line-height:1.6}
+
+.feed-report-progress progress{appearance:none;border:0;background:#e5e7eb}.feed-report-progress progress::-webkit-progress-bar{background:#e5e7eb}.feed-report-progress progress::-webkit-progress-value{background:#1d4ed8}.feed-report-progress progress::-moz-progress-bar{background:#1d4ed8}

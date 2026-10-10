@@ -393,3 +393,57 @@ test('Jev connection API is protected, records usage, releases its lock and neve
    const response=await handleAutomation(new Request(url,{method:'POST',headers,body:'{}'}),environment);assert.equal(response.status,200);assert.equal((await response.json()).connected,true);assert.equal(calls,1);assert.equal(await store.busy(Date.now()),false);assert.equal((await store.usage(0))[0].stage,'screen_check');assert.equal((await store.deliveries()).length,0);assert.equal((await store.digests()).length,0);assert.equal((await store.events()).length,0);
  }finally{globalThis.fetch=originalFetch;DB.close();}
 });
+
+test('Jev accepts independently rounded probabilities but still rejects malformed and inconsistent scores',async()=>{
+ const [article]=await parseFeed(rss(),source,now),environment={JEV_API_KEY:'test-jev'};
+ const response=(score,probabilities)=>Response.json({answers:{a0:{type:'score',score,confidence:0.8,probabilities}}});
+ const rounded={'0':0.19,'1':0.19,'2':0.19,'3':0.19,'4':0.22};
+ assert.equal((await screenArticles([article],defaultPolicy,environment,async()=>response(2.04,rounded)))[0].keep,true);
+ await assert.rejects(screenArticles([article],defaultPolicy,environment,async()=>response(2.2,rounded)),/结果不完整/);
+ await assert.rejects(screenArticles([article],defaultPolicy,environment,async()=>response(2,{'0':0.1,'1':0.1,'2':0.1,'3':0.1,'4':0.1})),/结果不完整/);
+ await assert.rejects(screenArticles([article],defaultPolicy,environment,async()=>response(2,{'0':0.2,'1':0.2,'2':0.2,'3':0.2})),/结果不完整/);
+});
+
+test('manual report has a fixed recent scope, persists real batch progress and resumes to completion without collecting or sending',async()=>{
+ const DB=d1(),store=new AutomationStore(DB),environment=env(DB),[a]=await parseFeed(rss(),source,now);
+ await store.addSource(source);await store.savePolicy({...defaultPolicy,deepLimit:1});
+ const make=(id,publishedAt=now-1000)=>({...a,id,url:'https://article.example/'+id,content:content+' '+id,contentHash:id,publishedAt});
+ await store.addArticles(source.id,[make('recent-a'),make('recent-b'),make('old',now-2*86400000)]);
+ let analyses=0;const base=mockFetch([]),fetcher=async(url,init)=>{
+   assert.notEqual(url,source.url);assert.ok(!String(url).includes('feishu')&&!String(url).includes('weixin'));
+   if(url===environment.LLM_BASE_URL+'/chat/completions'&&!Array.isArray(JSON.parse(JSON.parse(init.body).messages[1].content))){analyses++;const d=(await store.digests())[0];assert.equal(d.status,'generating');assert.equal(d.details.progress.stage,'analyzing');assert.equal(d.details.progress.total,2);}
+   return base(url,init);
+ };
+ const first=await runAutomation(environment,'report',now,fetcher),initial=await store.digest(first.digestId);
+ assert.equal(first.complete,false);assert.equal(initial.details.progress.completed,1);assert.equal(initial.details.progress.pending,1);assert.equal(initial.details.progress.rounds,1);assert.equal(initial.details.scope.articleIds.length,2);
+ await store.addArticles(source.id,[make('arrived-later')]);
+ const second=await runAutomation(environment,'report',now+1,fetcher,{reportId:first.digestId}),done=await store.digest(first.digestId);
+ assert.equal(second.digestId,first.digestId);assert.equal(second.complete,true);assert.equal(done.details.progress.stage,'complete');assert.equal(done.details.progress.completed,2);assert.equal(done.details.pendingCount,0);assert.equal(done.details.progress.rounds,2);assert.equal((await store.digests()).length,1);assert.equal(analyses,2);
+ await runAutomation(environment,'report',now+2,fetcher,{reportId:first.digestId});assert.equal(analyses,2);assert.equal((await store.deliveries()).length,0);DB.close();
+});
+
+test('manual report shows screening failure, does not advance falsely and can resume after provider recovery',async()=>{
+ const DB=d1(),store=new AutomationStore(DB),environment={...env(DB),JEV_API_KEY:'test-jev'};
+ await store.addSource(source);await store.addArticles(source.id,await parseFeed(rss(),source,now));
+ const failed=await runAutomation(environment,'report',now,async()=>new Response('',{status:503}));
+ const d=await store.digest(failed.digestId);assert.equal(d.details.progress.stage,'failed');assert.equal(d.details.progress.completed,0);assert.equal(d.details.progress.pending,1);assert.match(d.details.progress.failures[0],/HTTP 503/);assert.equal(failed.canContinue,false);assert.equal(await store.busy(now),false);
+ const base=mockFetch([]),fetcher=async(url,init)=>String(url).includes('typesafe.ai')?jevResponse(JSON.parse(init.body)):base(url,init);
+ const recovered=await runAutomation(environment,'report',now+1,fetcher,{reportId:failed.digestId});assert.equal(recovered.complete,true);assert.equal(recovered.digestId,failed.digestId);assert.equal((await store.digest(failed.digestId)).details.progress.failures.length,0);DB.close();
+});
+
+test('report continuation rejects legacy, changed-policy, sent and expired reports',async()=>{
+ const DB=d1(),store=new AutomationStore(DB),environment=env(DB);await store.addSource(source);await store.addArticles(source.id,await parseFeed(rss(),source,now));
+ await store.saveDigest({id:'report:legacy',date:'2026-10-09',createdAt:now,preview:true,status:'waiting',body:'',error:'',details:{manual:true,pendingCount:1}});
+ await assert.rejects(runAutomation(environment,'report',now,mockFetch([]),{reportId:'report:legacy'}),/旧报告/);
+ const r=await runAutomation(environment,'report',now,mockFetch([]));await store.savePolicy({...defaultPolicy,include:['AI']});
+ await assert.rejects(runAutomation(environment,'report',now+1,mockFetch([]),{reportId:r.digestId}),/要求已改变/);await store.savePolicy(defaultPolicy);
+ await assert.rejects(runAutomation(environment,'report',now+24*3600000,mockFetch([]),{reportId:r.digestId}),/23 小时/);
+ await sendReport(environment,r.digestId,now+2,mockFetch([]));await assert.rejects(runAutomation(environment,'report',now+3,mockFetch([]),{reportId:r.digestId}),/已经发送/);DB.close();
+});
+
+test('progress endpoint is authenticated and exposes counts without article identifiers or report bodies',async()=>{
+ const DB=d1(),store=new AutomationStore(DB),environment=env(DB);await store.addSource(source);
+ await store.saveDigest({id:'report:progress',date:'2026-10-09',createdAt:now,preview:true,status:'generating',body:'private report',error:'',details:{manual:true,scope:{articleIds:['private-article'],policyKey:'private-key',limited:false},progress:{stage:'screening',total:1,completed:0,filtered:0,pending:1,batchCompleted:0,batchTotal:0,rounds:1,updatedAt:now,failures:[],message:'初筛'}}});
+ const url='https://site.test/api/automation/progress';assert.equal((await handleAutomation(new Request(url),environment)).status,401);
+ const response=await handleAutomation(new Request(url,{headers:{Authorization:'Bearer '+environment.AUTOMATION_TOKEN}}),environment),raw=await response.text();assert.equal(response.status,200);assert.equal(JSON.parse(raw).report.details.progress.total,1);assert.ok(!raw.includes('private-article')&&!raw.includes('private-key')&&!raw.includes('private report'));assert.equal((await store.runs()).length,0);DB.close();
+});

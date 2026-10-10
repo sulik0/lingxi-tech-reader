@@ -1,4 +1,5 @@
 import {filterArticles} from './screening.ts';
+import {runManualReport} from './manual-report.ts';
 import {policyKey} from './policy.ts';
 import {selectDigestEvents} from './selection.ts';
 import { AutomationStore } from './store.ts';
@@ -7,7 +8,7 @@ import { fetchFeed } from './feeds.ts';
 import { processEvents, publishCollectedEvents, renderEvents } from './events.ts';
 import { channelReady, deliveryPayload, sendDelivery, DeliveryError } from './delivery.ts';
 import { beijingSchedule, AutomationError, type AutomationEnv, type Channel, type Digest, type Settings, suggestedFeeds } from './types.ts';
-export async function runAutomation(env:AutomationEnv,mode:'scheduled'|'collect'|'preview'|'report'='scheduled',now=Date.now(),fetcher:typeof fetch=fetch) {
+export async function runAutomation(env:AutomationEnv,mode:'scheduled'|'collect'|'preview'|'report'='scheduled',now=Date.now(),fetcher:typeof fetch=fetch,options:{reportId?:string}={}) {
   if(!env.DB)throw new AutomationError('后台数据库尚未配置。',503);
   const store=new AutomationStore(env.DB);let settings=await store.settings();
   const lock=await store.acquire(now);if(!lock)return {stage:'busy',message:'已有任务在运行，请稍后查看结果。'};
@@ -24,8 +25,9 @@ export async function runAutomation(env:AutomationEnv,mode:'scheduled'|'collect'
     const policy=await store.policy(),key=await policyKey(policy,env),budget={remaining:12},analysisStats={analyzedIDs:new Set<string>()};
     const sources=(await store.sources()).filter(s=>s.enabled);
     if(!sources.length){if(mode==='scheduled')return {message:'没有启用的订阅源。'};throw new AutomationError('请先添加并启用至少一个订阅源。');}
-    let added=0;const failures:string[]=mode==='report'?sources.filter(s=>s.error).map(s=>`${s.name}：${s.error}`):[];
-    for(const source of mode==='report'?[]:sources){try{const articles=await fetchFeed(source,env.FEED_ALLOWED_HOSTS||'',now,fetcher);added+=await store.addArticles(source.id,articles);await store.sourceResult(source.id,now,'');}catch(e){const error=e instanceof AutomationError?e.message:'读取订阅失败，请稍后重试。';failures.push(`${source.name}：${error}`);await store.sourceResult(source.id,now,error);}}
+    if(mode==='report')return await runManualReport(store,env,now,fetcher,options.reportId);
+    let added=0;const failures:string[]=[];
+    for(const source of sources){try{const articles=await fetchFeed(source,env.FEED_ALLOWED_HOSTS||'',now,fetcher);added+=await store.addArticles(source.id,articles);await store.sourceResult(source.id,now,'');}catch(e){const error=e instanceof AutomationError?e.message:'读取订阅失败，请稍后重试。';failures.push(`${source.name}：${error}`);await store.sourceResult(source.id,now,error);}}
     const failedSources=failures.length;
     if(mode==='collect')await publishCollectedEvents(store,now);
     else try{const errors=await processEvents(store,env,now,fetcher,budget,analysisStats);if(errors?.length)failures.push(...errors.map(e=>'事件分析：'+e));}catch(e){budget.remaining=0;failures.push('事件分析：'+(e instanceof Error?e.message:'分析失败，文章仍保留。'));}
@@ -36,13 +38,13 @@ export async function runAutomation(env:AutomationEnv,mode:'scheduled'|'collect'
     if(mode==='collect'){const stats=await store.collectionStats();return {message:`已检查 ${sources.length} 个来源，新增 ${added} 篇文章。${added===0?'没有发现新文章，已有文章不会重复入库。':''}已保存 ${stats?.articles||0} 篇，${stats?.pendingArticles||0} 篇正文等待后台分析；点击生成报告后，后台会继续分析。`,added,failures};}
     const schedule=beijingSchedule(now,settings.sendTime);
     if(mode==='scheduled'&&!schedule.due)return {message:'已检查订阅，尚未到发送时间。',failures};
-    const manual=mode==='report',preview=manual||mode==='preview';
-    let id=manual?`report:${now}:${crypto.randomUUID()}`:preview?`preview:${now}`:schedule.date;
+    const preview=mode==='preview';
+    let id=preview?`preview:${now}`:schedule.date;
     let previous=await store.digest(id);
     // Keep the old empty message as history; permit exactly one real digest for that day.
     if(previous?.details?.legacyEmpty){id=`${schedule.date}:content`;previous=await store.digest(id);}
     if(failedSources===sources.length&&previous?.status!=='ready')throw new AutomationError('全部订阅源读取失败，未生成或发送简报。',502);
-    digest=previous||{id,date:schedule.date,status:'generating',body:'',error:'',createdAt:now,preview,...(manual?{details:{manual:true}}:{})};
+    digest=previous||{id,date:schedule.date,status:'generating',body:'',error:'',createdAt:now,preview};
     if(digest.status!=='ready') {
       digest.status='generating';digest.error='';await store.saveDigest(digest);
       // Include this cycle's collection. The send time determines when to send, not which new articles to discard.
@@ -62,7 +64,7 @@ export async function runAutomation(env:AutomationEnv,mode:'scheduled'|'collect'
       const queue=preview?null:await store.queueSummary(now+1,key);
       const pendingCount=Math.max(selection.pendingCount+screened.waiting,queue?.pending||0);
       const remainingCount=Math.max(0,(queue?.total??(screened.articles.length+screened.waiting))-selection.articleCount);
-      digest.details={...(manual?{manual:true}:{}),policy:{include:policy.include,exclude:policy.exclude},filteredCount:await store.filteredCount(key,preview?now-86400000:0,now+1),analysisReused:selection.events.filter(e=>!analysisStats.analyzedIDs.has(e.id)).length,articleCount:selection.articleCount,eventCount:selection.events.length,pendingCount,remainingCount,completedAt:Math.max(now,Date.now())};
+      digest.details={policy:{include:policy.include,exclude:policy.exclude},filteredCount:await store.filteredCount(key,preview?now-86400000:0,now+1),analysisReused:selection.events.filter(e=>!analysisStats.analyzedIDs.has(e.id)).length,articleCount:selection.articleCount,eventCount:selection.events.length,pendingCount,remainingCount,completedAt:Math.max(now,Date.now())};
       if(!selection.events.length){
         digest.status=(queue?.total??(screened.articles.length+screened.waiting))>0?'waiting':'empty';
         digest.error='';digest.body='';await store.saveDigest(digest);
@@ -71,13 +73,12 @@ export async function runAutomation(env:AutomationEnv,mode:'scheduled'|'collect'
       digest.body=renderEvents(schedule.date,selection.events,failures.slice(0,failedSources),remainingCount>0);
       const scope=[policy.include.length?'关注：'+policy.include.join('、'):'',policy.exclude.length?'排除：'+policy.exclude.join('、'):''].filter(Boolean).join('；');
       if(scope)digest.body+='\n\n本报告采用的搜集要求：'+scope+'。';
-      if(manual)digest.body=digest.body.replace('# 灵析每日科技简报','# 灵析科技聚合报告');
       if(pendingCount)digest.body+=`\n\n生成时有 ${pendingCount} 篇文章尚未完成分析，未包含在本次简报中。`;
       digest.status='ready';
       if(preview)await store.saveDigest(digest);
       else await store.commitDaily(digest,selection.articleIds);
     }
-    if(preview)return {stage:manual?'report':'preview',digestId:id,added,failures,message:`${manual?'报告':'预览'}已生成${digest.details?.pendingCount?`，还有 ${digest.details.pendingCount} 篇待分析`:''}，没有发送到任何渠道。`};
+    if(preview)return {stage:'preview',digestId:id,added,failures,message:`预览已生成${digest.details?.pendingCount?`，还有 ${digest.details.pendingCount} 篇待分析`:''}，没有发送到任何渠道。`};
     return {...await deliverDigest(store,env,digest,settings,(['email','wecom','feishu'] as Channel[]).filter(c=>settings.channels[c]),now,fetcher),added,failures};
   }catch(e){if(digest&&digest.status!=='ready'){digest.status='error';digest.error=e instanceof Error?e.message:'生成失败。';await store.saveDigest(digest);}throw e;}finally{await store.release(lock);}
 }

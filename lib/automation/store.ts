@@ -40,9 +40,16 @@ export class AutomationStore {
     await this.db.batch([...obsolete.map(id=>this.db.prepare('DELETE FROM reading_events WHERE id=?').bind(id)),...events.flatMap(e=>[this.db.prepare('INSERT INTO reading_events(id,value,updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at').bind(e.id,JSON.stringify(e),e.updatedAt||Date.now()),...e.articles.map(a=>this.db.prepare('INSERT INTO event_articles(article_id,event_id) VALUES(?,?) ON CONFLICT(article_id) DO UPDATE SET event_id=excluded.event_id').bind(a.id,e.id))])]);
   }
   async eventForArticle(id:string){return (await this.db.prepare('SELECT event_id FROM event_articles WHERE article_id=?').bind(id).first<{event_id:string}>())?.event_id;}
-  async unprocessed(limit=24,includePending=true,policyKey=''):Promise<CollectedArticle[]> {
-    const {results}=await this.db.prepare("SELECT * FROM feed_articles WHERE (id NOT IN (SELECT article_id FROM event_articles) OR id IN (SELECT ea.article_id FROM event_articles ea JOIN reading_events re ON re.id=ea.event_id WHERE json_extract(re.value,'$.pending')=1 AND length(content)>=80 AND ?=1)) AND source_id IN (SELECT id FROM feed_sources WHERE enabled=1) AND id NOT IN (SELECT article_id FROM article_screenings WHERE policy_key=? AND keep=0) ORDER BY COALESCE((SELECT re.updated_at FROM event_articles ea JOIN reading_events re ON re.id=ea.event_id WHERE ea.article_id=feed_articles.id),collected_at) ASC,id LIMIT ?").bind(+includePending,policyKey,limit).all<any>();
+  async unprocessed(limit=24,includePending=true,policyKey='',scopeIDs?:string[]):Promise<CollectedArticle[]> {
+    if(scopeIDs&&!scopeIDs.length)return [];
+    const scope=scopeIDs?' AND id IN (SELECT value FROM json_each(?))':'';
+    const {results}=await this.db.prepare("SELECT * FROM feed_articles WHERE (id NOT IN (SELECT article_id FROM event_articles) OR id IN (SELECT ea.article_id FROM event_articles ea JOIN reading_events re ON re.id=ea.event_id WHERE json_extract(re.value,'$.pending')=1 AND length(content)>=80 AND ?=1)) AND source_id IN (SELECT id FROM feed_sources WHERE enabled=1) AND id NOT IN (SELECT article_id FROM article_screenings WHERE policy_key=? AND keep=0)"+scope+" ORDER BY COALESCE((SELECT re.updated_at FROM event_articles ea JOIN reading_events re ON re.id=ea.event_id WHERE ea.article_id=feed_articles.id),collected_at) ASC,id LIMIT ?").bind(+includePending,policyKey,...(scopeIDs?[JSON.stringify(scopeIDs)]:[]),limit).all<any>();
     return results.map(a=>({id:a.id,source:a.source,title:a.title,author:a.author,content:a.content,url:a.url,publishedAt:a.published_at,collectedAt:a.collected_at,contentHash:a.content_hash}));
+  }
+  async articlesByIDs(ids:string[]):Promise<CollectedArticle[]>{
+    const articles:CollectedArticle[]=[];
+    for(let i=0;i<ids.length;i+=80){const batch=ids.slice(i,i+80);const {results}=await this.db.prepare('SELECT * FROM feed_articles WHERE id IN ('+batch.map(()=>'?').join(',')+')').bind(...batch).all<any>();articles.push(...results.map(a=>({id:a.id,source:a.source,title:a.title,author:a.author,content:a.content,url:a.url,publishedAt:a.published_at,collectedAt:a.collected_at,contentHash:a.content_hash})));}
+    const order=new Map(ids.map((id,i)=>[id,i]));return articles.sort((a,b)=>order.get(a.id)!-order.get(b.id)!);
   }
   async collectionRun(now:number,added:number,failures:string[]){await this.db.prepare('INSERT INTO collection_runs(id,started_at,added,failures) VALUES(?,?,?,?)').bind(crypto.randomUUID(),now,added,JSON.stringify(failures)).run();}
   async runs(){return (await this.db.prepare('SELECT * FROM collection_runs ORDER BY started_at DESC LIMIT 20').all()).results;}

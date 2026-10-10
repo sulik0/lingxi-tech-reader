@@ -20,9 +20,9 @@ export async function publishCollectedEvents(store:AutomationStore,now:number) {
     : pendingEvent([a],now));
   for(let i=0;i<events.length;i+=25)await store.saveEvents(events.slice(i,i+25));
 }
-export async function processEvents(store:AutomationStore,env:AutomationEnv,now:number,fetcher:typeof fetch=fetch,budget={remaining:12},stats={analyzedIDs:new Set<string>()}) {
+export async function processEvents(store:AutomationStore,env:AutomationEnv,now:number,fetcher:typeof fetch=fetch,budget={remaining:12},stats={analyzedIDs:new Set<string>()},options:{scopeIDs?:string[];onProgress?:(completed:number,total:number)=>Promise<void>}={}) {
   const policy=await store.policy(),key=await policyKey(policy,env);
-  const screened=await filterArticles(store,await store.unprocessed(60,configured(env),key),policy,env,now,fetcher,budget);
+  const screened=await filterArticles(store,await store.unprocessed(60,configured(env),key,options.scopeIDs),policy,env,now,fetcher,budget);
   const incoming=screened.articles.slice(0,policy.deepLimit);
   if(!incoming.length)return;
   if(!configured(env)){await store.saveEvents(incoming.map(a=>pendingEvent([a],now)));return;}
@@ -30,7 +30,8 @@ export async function processEvents(store:AutomationStore,env:AutomationEnv,now:
   // Reconsider recent events along with new reports. Never discard an event's hidden articles.
   const candidates:CollectedArticle[]=[];
   const incomingIDs=new Set(incoming.map(a=>a.id));
-  for(const event of existing.filter(e=>!e.groupingLocked&&e.articleKind!=='roundup'&&now-(e.updatedAt||0)<48*3600000)) {
+  const scope=options.scopeIDs?new Set(options.scopeIDs):null;
+  for(const event of existing.filter(e=>!e.groupingLocked&&e.articleKind!=='roundup'&&now-(e.updatedAt||0)<48*3600000&&(!scope||e.articles.every(a=>scope.has(a.id))))) {
     if(event.articles.length+candidates.length>6)continue;
     for(const a of event.articles)if(!incomingIDs.has(a.id))candidates.push({...a,url:a.url||'',publishedAt:a.publishedAt||event.updatedAt||now,collectedAt:event.updatedAt||now,contentHash:await hash(a.content.replace(/\s+/g,''))});
   }
@@ -41,25 +42,27 @@ export async function processEvents(store:AutomationStore,env:AutomationEnv,now:
   const locked=new Set(existing.filter(e=>e.groupingLocked).flatMap(e=>e.articles.map(a=>a.id)));
   const long=all.filter(a=>a.content.length>=80&&!locked.has(a.id)),short=incoming.filter(a=>a.content.length<80);
   const groups=long.length?await clusterArticles(long,env,meteredFetch(fetcher,store,'group')):[];
-  for(const e of existing.filter(e=>e.groupingLocked&&e.articles.some(a=>incomingIDs.has(a.id)))){
+  for(const e of existing.filter(e=>e.groupingLocked&&e.articles.some(a=>incomingIDs.has(a.id))&&(!scope||e.articles.every(a=>scope.has(a.id))))){
     const members=await Promise.all(e.articles.map(async a=>({...a,url:a.url||'',publishedAt:a.publishedAt||now,collectedAt:now,contentHash:await hash(a.content.replace(/\s+/g,''))})));
     const eligible=await filterArticles(store,members,policy,env,now,fetcher,budget);
     if(eligible.articles.length===members.length)groups.push(members);
   }
   const outputs:EventItem[]=[];
-  let cursor=0,analysisCalls=0;const reserved=new Set<string>();
+  let cursor=0,analysisCalls=0,finished=0;const reserved=new Set<string>();
+  let progressWrite=Promise.resolve();
+  const progress=()=>{const completed=finished;progressWrite=progressWrite.then(()=>options.onProgress?.(completed,Math.min(groups.length,policy.deepLimit)));return progressWrite;};
+  await progress();
   const workers=Array.from({length:Math.min(3,groups.length)},async()=>{while(cursor<groups.length){const group=groups[cursor++];
 
     // Analyze distinct bodies, retain every source article and identify copied content explicitly.
     const unique=group.filter((a,i)=>group.findIndex(b=>b.contentHash===a.contentHash)===i);
-    if(unique.reduce((n,a)=>n+a.content.length,0)>72000)throw new Error('该事件正文超过分析容量，文章已保留，等待调整分组。');
     const prior=existing.find(e=>e.articles.some(a=>group.some(b=>b.id===a.id)));
     const id=prior&&prior.articles.every(a=>group.some(b=>b.id===a.id))&&!reserved.has(prior.id)?prior.id:crypto.randomUUID();reserved.add(id);
     if(prior&&!prior.pending&&prior.articles.length===group.length&&group.every(a=>prior.articles.some(b=>b.id===a.id&&b.content===a.content&&b.title===a.title&&b.source===a.source&&b.author===a.author))){outputs.push(prior);continue;}
     if(analysisCalls>=policy.deepLimit)continue;analysisCalls++;
     const event=pendingEvent(group,now,id);
     let result:Awaited<ReturnType<typeof analyzeArticles>>;
-    try{result=await analyzeArticles(unique,env,meteredFetch(fetcher,store,'analysis'));}catch(e){event.summary='文章已保存，模型分析未通过校验。';event.uncertainty=e instanceof Error?e.message:'分析失败。';event.groupingLocked=prior?.groupingLocked;outputs.push(event);continue;}
+    try{if(unique.reduce((n,a)=>n+a.content.length,0)>72000)throw new Error('该事件正文超过分析容量，文章已保留，等待调整分组。');result=await analyzeArticles(unique,env,meteredFetch(fetcher,store,'analysis'));}catch(e){event.summary='文章已保存，模型分析未通过校验。';event.uncertainty=e instanceof Error?e.message:'分析失败。';event.groupingLocked=prior?.groupingLocked;outputs.push(event);finished++;await progress();continue;}
     stats.analyzedIDs.add(event.id);
     Object.assign(event,result,{pending:false,groupingLocked:prior?.groupingLocked});
     event.articles=group.map(a=>{
@@ -67,7 +70,7 @@ export async function processEvents(store:AutomationStore,env:AutomationEnv,now:
       const evaluation=result.evaluations.find(e=>e.id===original.id)!;
       return {...toArticle(a),...evaluation,id:a.id,...(original.id!==a.id?{duplicate:100,reason:'正文与同组文章相同，没有新增信息。',extra:'没有新增信息；保留这个来源便于追溯。'}:{})};
     });
-    outputs.push(event);
+    outputs.push(event);finished++;await progress();
   }});
   const outcomes=await Promise.allSettled(workers);const failure=outcomes.find((r):r is PromiseRejectedResult=>r.status==='rejected');if(failure)throw failure.reason;
   outputs.push(...short.map(a=>({...pendingEvent([a],now),summary:a.content,uncertainty:'订阅源只有短摘要，未作质量评分。'})));
