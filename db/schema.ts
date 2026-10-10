@@ -11,3 +11,7 @@ export const memberships=sqliteTable('event_articles',{article_id:text().primary
 export const reported=sqliteTable('digest_articles',{article_id:text().primaryKey(),digest_id:text().notNull()});
 export const runs=sqliteTable('collection_runs',{id:text().primaryKey(),started_at:integer().notNull(),added:integer().notNull(),failures:text().notNull()});
 export const seen=sqliteTable('article_seen',{source_id:text().notNull(),article_id:text().notNull(),url:text().notNull(),content_hash:text().notNull()},t=>[primaryKey({columns:[t.source_id,t.article_id]}),index('article_seen_url').on(t.source_id,t.url),index('article_seen_hash').on(t.source_id,t.content_hash)]);
+
+export const policy=sqliteTable('collection_policy',{id:integer().primaryKey(),value:text().notNull()},t=>[check('single_policy',sql`${t.id}=1`)]);
+export const screenings=sqliteTable('article_screenings',{article_id:text().notNull(),policy_key:text().notNull(),keep:integer().notNull(),reason:text().notNull(),stage:text().notNull(),created_at:integer().notNull()},t=>[primaryKey({columns:[t.article_id,t.policy_key]}),index('article_screenings_policy').on(t.policy_key,t.keep)]);
+export const usage=sqliteTable('model_usage',{id:text().primaryKey(),stage:text().notNull(),model:text().notNull(),prompt_tokens:integer(),completion_tokens:integer(),created_at:integer().notNull()},t=>[index('model_usage_time').on(t.created_at)]);

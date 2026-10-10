@@ -1,3 +1,7 @@
+import {defaultPolicy,parseLocalInstruction,parseInstruction,matchPolicy,policyKey,validatePolicy} from '../lib/automation/policy.ts';
+import {screenArticles} from '../lib/automation/jev.ts';
+import {filterArticles} from '../lib/automation/screening.ts';
+import {meteredFetch} from '../lib/automation/meter.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
@@ -300,4 +304,78 @@ test('report selection prefers usable content over failures and honors explicit 
 test('report includes links to other sources in addition to the recommended article',()=>{
  const body=renderEvents('2026-10-09',[{...modelResult([{id:'a'}]),articles:[{id:'a',title:'自编来源 A',score:80,url:'https://article.example/a'},{id:'b',title:'自编来源 B',score:70,url:'https://article.example/b'}]}],[]);
  assert.match(body,/原文：https:\/\/article.example\/a/);assert.match(body,/参考：自编来源 B｜https:\/\/article.example\/b/);
+});
+
+function jevResponse(body,score=3,confidence=0.9){return Response.json({model:'jev-1.13.0',answers:Object.fromEntries(Object.keys(body.questions).map(id=>[id,{type:'score',score,confidence,probabilities:Object.fromEntries([0,1,2,3,4].map(n=>[n,n===Math.floor(score)?1-(score%1):n===Math.ceil(score)?score%1:0]))}])),usage:{input_tokens:123,output_tokens:14}});}
+test('collection requirements parse negation locally, expand topics and prioritize exclusions',async()=>{
+ assert.deepEqual(parseLocalInstruction('不关注汽车手机'),{include:[],exclude:['汽车','手机']});
+ assert.deepEqual(parseLocalInstruction('关注 AI 和芯片，不关注汽车手机'),{include:['AI','芯片'],exclude:['汽车','手机']});
+ assert.equal(parseLocalInstruction('希望多看一些有技术细节的文章，少看纯粹的宣传'),null);
+ assert.equal(parseLocalInstruction('不关注汽车手机，重点看大模型'),null);
+ assert.equal(parseLocalInstruction('不关注汽车但关注AI'),null);
+ const p={...defaultPolicy,include:['AI'],exclude:['汽车','手机']};
+ assert.equal(matchPolicy({title:'蔚来换电加入 AI',content:''},p).keep,false);
+ assert.equal(matchPolicy({title:'Claude 模型升级',content:''},p).keep,true);
+ assert.equal(matchPolicy({title:'Daily newsletter',content:''},p).keep,false);
+ let calls=0;const parsed=await parseInstruction('不关注汽车手机',{},async()=>{calls++;throw Error();});assert.equal(calls,0);assert.equal(parsed.method,'规则解析');
+ assert.throws(()=>validatePolicy({...p,deepLimit:7}));
+});
+test('Jev uses typed batch questions and short excerpts; uncertain scores are retained',async()=>{
+ const a={...(await parseFeed(rss(),source,now))[0],content:content.repeat(20)},environment={JEV_API_KEY:'test-jev'};
+ const result=await screenArticles([a],defaultPolicy,environment,async(url,init)=>{assert.equal(url,'https://api.typesafe.ai/v1/systemone');assert.equal(init.redirect,'manual');assert.equal(init.headers.Authorization,'Bearer test-jev');const body=JSON.parse(init.body);assert.equal(body.model,'jev-1.13.0');assert.equal(body.state.articles[0].excerpt.length,300);assert.equal(body.questions.a0.type,'score');assert.equal(body.questions.a0.criteria.length,5);return jevResponse(body,0.4,0.2);});
+ assert.equal(result[0].keep,true);
+ assert.equal((await screenArticles([a],defaultPolicy,environment,async(_,init)=>jevResponse(JSON.parse(init.body),0.4,0.9)))[0].keep,false);
+ await assert.rejects(screenArticles([a],defaultPolicy,environment,async()=>Response.json({answers:{a0:{type:'score',score:NaN,confidence:1}}})),/结果不完整/);
+ await assert.rejects(screenArticles([a],defaultPolicy,environment,async()=>new Response('secret',{status:401})),e=>/HTTP 401/.test(e.message)&&!e.message.includes('secret'));
+});
+test('free rules avoid paid requests; Jev decisions cache, budgets cap screening and policy changes invalidate cache',async()=>{
+ const DB=d1(),store=new AutomationStore(DB),a=(await parseFeed(rss(),source,now))[0],environment={...env(DB),JEV_API_KEY:'test-jev'};let calls=0;
+ const fetcher=async(_,init)=>{calls++;return jevResponse(JSON.parse(init.body));};
+ const excluded={...defaultPolicy,exclude:['模型']};assert.equal((await filterArticles(store,[a],excluded,environment,now,fetcher)).skipped,1);assert.equal(calls,0);
+ const articles=Array.from({length:15},(_,i)=>({...a,id:'a'+i}));const budget={remaining:12};const first=await filterArticles(store,articles,defaultPolicy,environment,now,fetcher,budget);assert.equal(first.articles.length,12);assert.equal(first.waiting,3);assert.equal(calls,1);
+ const same=await filterArticles(store,articles,defaultPolicy,environment,now,fetcher,budget);assert.equal(same.reused,12);assert.equal(same.waiting,3);assert.equal(calls,1);
+ assert.notEqual(await policyKey(defaultPolicy,environment),await policyKey({...defaultPolicy,minValue:80},environment));
+ assert.equal((await filterArticles(store,[a],defaultPolicy,env(DB),now,()=>{throw Error('should not call')})).articles.length,1);
+ const usage=await store.usage(0);assert.equal(usage[0].promptTokens,123);assert.equal(usage[0].completionTokens,14);assert.equal(usage[0].model,'jev-1.13.0');DB.close();
+});
+test('saved requirements apply to reports; Jev outage never falls back to full analysis or marks content sent',async()=>{
+ const DB=d1(),store=new AutomationStore(DB),environment={...env(DB),JEV_API_KEY:'test-jev'};await store.addSource(source);await store.addArticles(source.id,await parseFeed(rss(),source,now));
+ let advanced=0;const outage=async(url)=>{if(String(url).includes('model.example'))advanced++;return new Response('secret',{status:503});};
+ const result=await runAutomation(environment,'report',now,outage);assert.equal(result.stage,'waiting');assert.equal(advanced,0);assert.equal((await store.pendingArticles(now+1)).length,1);assert.equal((await store.deliveries()).length,0);
+ await store.savePolicy({...defaultPolicy,exclude:['模型']});const excluded=await runAutomation(environment,'report',now+1,outage);assert.equal(excluded.stage,'empty');assert.equal(advanced,0);DB.close();
+});
+test('unmodified event analysis is reused; bounded processing does not replace hidden event members',async()=>{
+ const DB=d1(),store=new AutomationStore(DB),environment=env(DB);await store.addSource(source);const [a]=await parseFeed(rss(),source,now);await store.addArticles(source.id,[a]);const base=mockFetch([]);let analyses=0;
+ const fetcher=async(url,init)=>{if(url===environment.LLM_BASE_URL+'/chat/completions'&&!Array.isArray(JSON.parse(JSON.parse(init.body).messages[1].content)))analyses++;return base(url,init);};
+ await processEvents(store,environment,now,fetcher);const first=(await store.events())[0];assert.equal(analyses,1);
+ await store.addArticles(source.id,[{...a,id:'second',url:a.url+'/second',content:content+' 另一个事件。',contentHash:'different'}]);await processEvents(store,environment,now+1,fetcher);assert.equal(analyses,2);assert.deepEqual((await store.events()).find(e=>e.id===first.id),first);
+ const report=await runAutomation(environment,'report',now+2,fetcher);assert.equal(analyses,2);assert.equal((await store.digest(report.digestId)).details.analysisReused,2);DB.close();
+});
+test('policy APIs require authorization, validate rules and persist only reviewed requirements',async()=>{
+ const DB=d1(),environment=env(DB),origin='https://site.test',headers={Authorization:'Bearer '+environment.AUTOMATION_TOKEN,origin,'Content-Type':'application/json'};
+ const call=(path,body)=>handleAutomation(new Request(origin+'/api/automation'+path,{method:path.endsWith('parse')?'POST':'PATCH',headers,body:JSON.stringify(body)}),environment);
+ assert.equal((await call('/policy',{...defaultPolicy,deepLimit:99})).status,400);
+ const parsed=await (await call('/policy/parse',{instruction:'不关注汽车手机'})).json();assert.deepEqual(parsed.exclude,['汽车','手机']);assert.deepEqual((await new AutomationStore(DB).policy()).exclude,[]);
+ assert.equal((await call('/policy',{...defaultPolicy,exclude:parsed.exclude})).status,200);assert.deepEqual((await new AutomationStore(DB).policy()).exclude,['汽车','手机']);DB.close();
+});
+test('missing provider token usage stays unknown, and migration preserves prior source settings',async()=>{
+ const DB=d1(),store=new AutomationStore(DB);await store.saveSettings(defaultSettings);await store.addSource(source);
+ await meteredFetch(async()=>Response.json({choices:[]}),store,'analysis')('https://model.example',{body:JSON.stringify({model:'test'})});const [usage]=await store.usage(0);assert.equal(usage.unknownCalls,1);assert.equal(usage.promptTokens,null);assert.equal((await store.sources())[0].name,source.name);assert.deepEqual(await store.settings(),defaultSettings);DB.close();
+});
+
+test('changing exclusions cannot leak an excluded member through a previously completed event',async()=>{
+ const DB=d1(),store=new AutomationStore(DB),environment=env(DB);await store.addSource(source);const [a]=await parseFeed(rss(),source,now),car={...a,id:'car',title:'汽车发布',url:a.url+'/car',content:content+' 汽车配置。',contentHash:'car-hash'};
+ await store.addArticles(source.id,[a,car]);await store.saveEvents([{...invalidateEvent({id:'mixed',articles:[],points:[],facts:[],opinions:[]},[a,car]),pending:false,title:'混合主题',summary:'包含汽车配置',updatedAt:now,conclusion:'test',uncertainty:'test'}]);
+ await store.savePolicy({...defaultPolicy,exclude:['汽车']});const result=await runAutomation(environment,'report',now+1,mockFetch([]));const digest=await store.digest(result.digestId);assert.equal(digest.status,'waiting');assert.doesNotMatch(digest.body,/汽车配置/);assert.equal((await store.events())[0].articles.length,2);assert.equal(digest.details.filteredCount,1);DB.close();
+});
+test('full analysis budget counts events while preserving unprocessed articles for later rounds',async()=>{
+ const DB=d1(),store=new AutomationStore(DB),environment=env(DB);await store.addSource(source);const [a]=await parseFeed(rss(),source,now);await store.addArticles(source.id,Array.from({length:3},(_,i)=>({...a,id:'b'+i,url:a.url+i,content:content+' 自编差异'+i,contentHash:'body'+i})));
+ await store.savePolicy({...defaultPolicy,deepLimit:1});let calls=0;const base=mockFetch([]);const fetcher=async(url,init)=>{if(String(url).includes('model.example')&&!Array.isArray(JSON.parse(JSON.parse(init.body).messages[1].content)))calls++;return base(url,init);};
+ await processEvents(store,environment,now,fetcher);assert.equal(calls,1);assert.equal((await store.unprocessed()).length,2);await processEvents(store,environment,now+1,fetcher);assert.equal(calls,2);assert.equal((await store.unprocessed()).length,1);DB.close();
+});
+
+test('complex natural language uses one explicit parsing request and validates the returned rules',async()=>{
+ let calls=0;const result=await parseInstruction('希望多看一些有技术细节的 AI 文章，不想看汽车报道',env(),async(url,init)=>{calls++;assert.equal(url,env().LLM_BASE_URL+'/chat/completions');assert.equal(init.redirect,'manual');assert.equal(JSON.parse(init.body).max_tokens,1600);return Response.json({choices:[{message:{content:JSON.stringify({include:['AI'],exclude:['汽车']})}}]});});assert.deepEqual(result.include,['AI']);assert.deepEqual(result.exclude,['汽车']);assert.equal(calls,1);
+ await assert.rejects(parseInstruction('希望多看一些有技术细节的文章',env(),async()=>Response.json({choices:[{message:{content:'null'}}]})),/有效关键词/);
+ assert.equal(await policyKey({...defaultPolicy,include:['AI','芯片']},{}),await policyKey({...defaultPolicy,include:['芯片','AI']},{}));
 });

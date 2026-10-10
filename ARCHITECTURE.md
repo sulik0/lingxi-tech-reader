@@ -9,6 +9,8 @@ Cloudflare Worker 负责采集、分析和发送，D1 保存来源、文章、�
 | `lib/automation/feeds.ts` | 校验来源地址，解析 RSS/Atom，清理正文和跟踪参数。 |
 | `lib/automation/store.ts`、`db/schema.ts`、`drizzle/` | 保存文章、事件、发送队列、历史记录和任务锁。 |
 | `lib/roundup.ts`、`lib/automation/digest.ts` | 将明确的多主题早报单独保留，其他文章由模型按具体事件分组，检查 ID 是否完整且不重复。 |
+| `lib/automation/policy.ts`、`screening.ts`、`jev.ts` | 解析搜集要求，先匹配关键词，再调用 Jev 判断阅读价值并保存筛选结果。 |
+| `lib/automation/meter.ts` | 按阶段记录服务返回的 Token 用量，缺少统计时保留未知状态。 |
 | `lib/automation/events.ts` | 比较新报道和近期事件，分析正文，保存统一事件，并把这些事件排成每日简报。 |
 | `lib/analyze.ts` | 调用模型，检查正文引文、评分与推荐文章 ID；提供八类分析结果。 |
 | `lib/automation/selection.ts`、`lib/automation/runner.ts` | 选择已经分析的内容，未完成文章继续排队；有内容时冻结简报并发送，保留等待、错误和渠道结果。 |
@@ -26,7 +28,8 @@ Cloudflare Worker 负责采集、分析和发送，D1 保存来源、文章、�
 flowchart TD
   A[定时读取启用的 RSS / Atom] --> B[清理正文和 URL]
   B --> C[D1 文章与永久去重记录]
-  C --> D[待处理文章和近期事件]
+  C --> P[关键词筛选与可选 Jev 初筛]
+  P --> D[通过筛选的文章和近期事件]
   D --> E[模型按具体事件分组]
   E --> F[正文交叉分析与引用检查]
   F --> G[D1 统一事件]
@@ -53,8 +56,11 @@ flowchart TD
 | React 19、TypeScript、Vinext/Vite | 提供阅读交互、检查字段，并构建 Cloudflare Worker。 |
 | Cloudflare Workers、D1 | 页面和后台使用同一个运行环境；文章与事件不依赖开发电脑保存。 |
 | fast-xml-parser | 解析 RSS/Atom，配合大小限制和实体检查处理不可信内容。 |
+| Jev 的 System One HTTP API | 批量提出 Score 问题，依据分数和把握程度决定是否进一步分析。 |
 | Chat Completions 与 JSON mode | 通过兼容接口调用模型；当前用户指定 DeepSeek Flash。 |
 | 页面内存 | 只保留本次管理口令与操作状态，报告和设置从 D1 读取。 |
 | Node.js 测试、SQLite、GitHub Actions | 检查实际 SQL、模型结果规则与重复任务行为，并验证构建。 |
 
 业务模块直接使用 D1，Drizzle 管理数据库结构与部署迁移；初始 R2 和 connector 示例尚未参与正式处理。配置、容量和失败规则见[自动订阅与推送](docs/automation.md)。模型没有联网事实核查能力，多个来源提及仍不等于独立证实。
+
+搜集规则、筛选缓存、分析复用和用量统计的具体行为见[搜集要求与模型开销](docs/collection-policy.md)。

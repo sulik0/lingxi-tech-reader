@@ -1,6 +1,8 @@
 import type { AnalysisEnv } from '../analyze';
 export type Channel = 'email' | 'wecom' | 'feishu';
 export type AutomationEnv = AnalysisEnv & {
+  JEV_API_KEY?:string;
+  JEV_MODEL?:string;
   DB?: D1Database;
   SITES_PRIVATE_AUTOMATION?: string;
   AUTOMATION_TOKEN?: string;
@@ -20,7 +22,7 @@ export const suggestedFeeds = [
   {name:'宝玉的分享（博客 RSS）',url:'https://s.baoyu.io/feed.xml'},
 ];
 export type CollectedArticle = {id:string;source:string;title:string;author:string;content:string;url:string;publishedAt:number;collectedAt:number;contentHash:string};
-export type DigestDetails = {manual?:boolean;articleCount?:number;eventCount?:number;pendingCount?:number;remainingCount?:number;completedAt?:number;legacyEmpty?:boolean};
+export type DigestDetails = {manual?:boolean;policy?:{include:string[];exclude:string[]};filteredCount?:number;analysisReused?:number;articleCount?:number;eventCount?:number;pendingCount?:number;remainingCount?:number;completedAt?:number;legacyEmpty?:boolean};
 export type Digest = {details?:DigestDetails;id:string;date:string;status:string;body:string;error:string;createdAt:number;preview:boolean};
 export class AutomationError extends Error {
   status:number;

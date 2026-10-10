@@ -28,3 +28,16 @@ body{color:#263b30;background:#f7f8f5}.main-content{max-width:1100px;margin:0 au
 @media(max-width:600px){.report-header{padding:18px 20px}.report-brand{font-size:21px}.report-brand>small{display:none}.report-header>div{gap:16px}.report-main{padding:30px 18px 40px}.report-intro h1{font-size:27px}.report-intro>p:last-child{font-size:14px}.report-start{padding:20px 16px}.report-steps{font-size:11px;gap:8px;justify-content:space-between}.report-steps>span{gap:4px}.report-steps>span>svg{width:13px}.report-steps>svg{width:10px}.report-actions{flex-direction:column;align-items:stretch;gap:10px}.report-actions>button{width:100%;white-space:normal}.report-connect{padding:18px 16px}.report-result{padding:23px 19px}.report-result-heading h2{font-size:20px}.report-result-heading{align-items:flex-start}.report-result .brief-event h3{font-size:18px}.report-settings #automation-sources,.report-settings #automation-settings{padding:19px 16px}.report-settings .section-heading{align-items:flex-start;flex-wrap:wrap}.report-history .digest-history-list button{grid-template-columns:1fr auto}.report-history .digest-history-list time{grid-column:1/-1}.report-footer{padding:22px 25px}}
 
 .report-result .brief-document{padding-top:16px;margin-top:20px;border-top:1px solid #e8eddf}.report-result .brief-basis{padding-top:0!important;margin-top:0!important;border-top:0!important}.report-result .brief-event h3{color:#2d3c30;margin-top:0}.report-result .brief-event p{color:#526052}.report-result .brief-event:last-child{padding-bottom:0}
+
+.collection-policy {margin-top:18px;text-align:left;font-size:13px;background:#fafbf8;padding:14px;border-radius:10px;border:1px solid #e5e9df;}
+.collection-policy>summary{cursor:pointer;line-height:1.6;}
+.collection-policy p{line-height:1.7;color:#697260;margin:12px 0;}
+.collection-policy textarea{width:100%;padding:10px;border:1px solid #d8ded1;border-radius:8px;font:inherit;resize:vertical;background:white;}
+.collection-policy button{margin-top:10px;}
+.policy-keywords{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px;}
+@media(max-width:600px){.policy-keywords{grid-template-columns:1fr;gap:8px;}}
+
+.collection-policy .automation-field{display:grid;gap:7px;margin:14px 0;min-width:0;color:#52644e;}
+.collection-policy .automation-field input,.collection-policy .automation-field select{width:100%;min-width:0;border:1px solid #d8ded1;background:#fff;border-radius:8px;padding:10px 12px;color:#28392b;}
+.collection-policy .automation-check{display:flex;align-items:center;gap:8px;margin-top:14px;}
+.collection-policy>details{margin:16px 0;}

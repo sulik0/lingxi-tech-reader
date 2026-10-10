@@ -1,3 +1,5 @@
+import {filterArticles} from './screening.ts';
+import {policyKey} from './policy.ts';
 import {selectDigestEvents} from './selection.ts';
 import { AutomationStore } from './store.ts';
 import { hash, feedURL } from './feeds.ts';
@@ -19,16 +21,17 @@ export async function runAutomation(env:AutomationEnv,mode:'scheduled'|'collect'
       for(const feed of suggestedFeeds){try{const url=feedURL(feed.url,env.FEED_ALLOWED_HOSTS||'');if(!current.some(s=>s.url===url))initial.push({...feed,url,id:await hash(url)});}catch{}}
       await store.db.batch([store.db.prepare('INSERT OR IGNORE INTO automation_settings(id,value) VALUES(1,?)').bind(JSON.stringify(settings)),...initial.map(s=>store.db.prepare('INSERT OR IGNORE INTO feed_sources(id,name,url,enabled) VALUES(?,?,?,1)').bind(s.id,s.name,s.url))]);
     }
+    const policy=await store.policy(),key=await policyKey(policy,env),budget={remaining:12},analysisStats={analyzedIDs:new Set<string>()};
     const sources=(await store.sources()).filter(s=>s.enabled);
     if(!sources.length){if(mode==='scheduled')return {message:'没有启用的订阅源。'};throw new AutomationError('请先添加并启用至少一个订阅源。');}
     let added=0;const failures:string[]=mode==='report'?sources.filter(s=>s.error).map(s=>`${s.name}：${s.error}`):[];
     for(const source of mode==='report'?[]:sources){try{const articles=await fetchFeed(source,env.FEED_ALLOWED_HOSTS||'',now,fetcher);added+=await store.addArticles(source.id,articles);await store.sourceResult(source.id,now,'');}catch(e){const error=e instanceof AutomationError?e.message:'读取订阅失败，请稍后重试。';failures.push(`${source.name}：${error}`);await store.sourceResult(source.id,now,error);}}
     const failedSources=failures.length;
     if(mode==='collect')await publishCollectedEvents(store,now);
-    else try{const errors=await processEvents(store,env,now,fetcher);if(errors?.length)failures.push(...errors.map(e=>'事件分析：'+e));}catch(e){failures.push('事件分析：'+(e instanceof Error?e.message:'分析失败，文章仍保留。'));}
+    else try{const errors=await processEvents(store,env,now,fetcher,budget,analysisStats);if(errors?.length)failures.push(...errors.map(e=>'事件分析：'+e));}catch(e){budget.remaining=0;failures.push('事件分析：'+(e instanceof Error?e.message:'分析失败，文章仍保留。'));}
     await store.collectionRun(now,added,failures);
     // Retention also runs when delivery is paused.
-    await store.db.batch([store.db.prepare('DELETE FROM feed_articles WHERE collected_at<? AND id IN (SELECT article_id FROM digest_articles)').bind(now-14*86400000),store.db.prepare('DELETE FROM daily_digests WHERE preview=1 AND created_at<?').bind(now-7*86400000)]);
+    await store.db.batch([store.db.prepare('DELETE FROM feed_articles WHERE collected_at<? AND id IN (SELECT article_id FROM digest_articles)').bind(now-14*86400000),store.db.prepare('DELETE FROM model_usage WHERE created_at<?').bind(now-30*86400000),store.db.prepare('DELETE FROM article_screenings WHERE created_at<?').bind(now-30*86400000),store.db.prepare('DELETE FROM daily_digests WHERE preview=1 AND created_at<?').bind(now-7*86400000)]);
     if(mode==='scheduled'&&!settings.enabled)return {message:'已检查订阅，每日推送未启用。',failures};
     if(mode==='collect'){const stats=await store.collectionStats();return {message:`已检查 ${sources.length} 个来源，新增 ${added} 篇文章。${added===0?'没有发现新文章，已有文章不会重复入库。':''}已保存 ${stats?.articles||0} 篇，${stats?.pendingArticles||0} 篇正文等待后台分析；点击生成报告后，后台会继续分析。`,added,failures};}
     const schedule=beijingSchedule(now,settings.sendTime);
@@ -43,18 +46,31 @@ export async function runAutomation(env:AutomationEnv,mode:'scheduled'|'collect'
     if(digest.status!=='ready') {
       digest.status='generating';digest.error='';await store.saveDigest(digest);
       // Include this cycle's collection. The send time determines when to send, not which new articles to discard.
-      const articles=preview?await store.articles(now-86400000,now+1):await store.pendingArticles(now+1,241);
-      const selection=selectDigestEvents(articles,await store.events());
-      const queue=preview?null:await store.queueSummary(now+1);
-      const pendingCount=queue?.pending??selection.pendingCount;
-      const remainingCount=Math.max(0,(queue?.total??articles.length)-selection.articleCount);
-      digest.details={...(manual?{manual:true}:{}),articleCount:selection.articleCount,eventCount:selection.events.length,pendingCount,remainingCount,completedAt:Math.max(now,Date.now())};
+      const articles=preview?await store.articles(now-86400000,now+1,key):await store.pendingArticles(now+1,241,key);
+      const screened=await filterArticles(store,articles,policy,env,now,fetcher,budget);
+      // Whole-event checks prevent a filtered article from leaking back through a shared report.
+      const allowed=new Set(screened.articles.map(a=>a.id));
+      const candidates=await store.events();
+      const eligible=[];
+      for(const event of candidates){
+        if(!event.articles.some(a=>allowed.has(a.id)))continue;
+        const members=event.articles.map(a=>({...a,url:a.url||'',publishedAt:a.publishedAt||now,collectedAt:now,contentHash:''}));
+        const checked=await filterArticles(store,members,policy,env,now,fetcher,budget);
+        if(checked.articles.length===members.length)eligible.push(event);
+      }
+      const selection=selectDigestEvents(screened.articles,eligible);
+      const queue=preview?null:await store.queueSummary(now+1,key);
+      const pendingCount=Math.max(selection.pendingCount+screened.waiting,queue?.pending||0);
+      const remainingCount=Math.max(0,(queue?.total??(screened.articles.length+screened.waiting))-selection.articleCount);
+      digest.details={...(manual?{manual:true}:{}),policy:{include:policy.include,exclude:policy.exclude},filteredCount:await store.filteredCount(key,preview?now-86400000:0,now+1),analysisReused:selection.events.filter(e=>!analysisStats.analyzedIDs.has(e.id)).length,articleCount:selection.articleCount,eventCount:selection.events.length,pendingCount,remainingCount,completedAt:Math.max(now,Date.now())};
       if(!selection.events.length){
-        digest.status=(queue?.total??articles.length)>0?'waiting':'empty';
+        digest.status=(queue?.total??(screened.articles.length+screened.waiting))>0?'waiting':'empty';
         digest.error='';digest.body='';await store.saveDigest(digest);
         return {stage:digest.status,digestId:id,added,failures,message:digest.status==='waiting'?'文章已保存，正在等待分析；目前没有可展示的简报，也没有发送。':'目前没有可纳入简报的新文章，没有发送；发现新内容后会继续处理。'};
       }
       digest.body=renderEvents(schedule.date,selection.events,failures.slice(0,failedSources),remainingCount>0);
+      const scope=[policy.include.length?'关注：'+policy.include.join('、'):'',policy.exclude.length?'排除：'+policy.exclude.join('、'):''].filter(Boolean).join('；');
+      if(scope)digest.body+='\n\n本报告采用的搜集要求：'+scope+'。';
       if(manual)digest.body=digest.body.replace('# 灵析每日科技简报','# 灵析科技聚合报告');
       if(pendingCount)digest.body+=`\n\n生成时有 ${pendingCount} 篇文章尚未完成分析，未包含在本次简报中。`;
       digest.status='ready';
