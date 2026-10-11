@@ -260,7 +260,7 @@ test('delivery response reports rejection and uncertainty instead of uncondition
 test('preview history cannot hide daily records or become the selected daily record',async()=>{
   const DB=d1(),store=new AutomationStore(DB);await store.saveDigest({id:'daily',date:'2026-10-09',status:'ready',body:'自编简报',error:'',createdAt:now,preview:false});
   for(let i=0;i<12;i++)await store.saveDigest({id:'preview-'+i,date:'2026-10-09',status:'error',body:'',error:'还有文章等待成功分析，未发送不完整的简报；后续任务会继续处理。',createdAt:now+i+1,preview:true});
-  const list=await store.digests();assert.equal(list.filter(d=>!d.preview).length,1);assert.equal(selectHistory(list,false,'preview-11').id,'daily');assert.equal(selectHistory(list,true,'daily').id,'preview-11');assert.equal(digestLabel(list[0]),'等待分析');DB.close();
+  const list=await store.digests();assert.equal(list.filter(d=>!d.preview).length,1);assert.equal(selectHistory(list,false,'preview-11').id,'daily');assert.equal(selectHistory(list,true,'daily').id,'preview-11');assert.equal(digestLabel(list[0]),'还未生成报告');DB.close();
 });
 
 test('a valid empty RSS or Atom feed is a successful check with no articles',async()=>{

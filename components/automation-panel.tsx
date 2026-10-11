@@ -60,7 +60,7 @@ export default function AutomationPanel(){
       {usable&&manual&&!data.services.feishu&&<p className="digest-explanation">飞书机器人尚未配置，请在服务端填写 Webhook。</p>}
       {(row?.attempts||0)>=3&&row?.status==='error'&&<p className="digest-explanation">已达到这份报告的重试上限，请检查设置和处理记录。</p>}
       {!!current.details?.pendingCount&&<p className="digest-explanation">生成时有 {current.details.pendingCount} 篇未完成分析，未纳入本次报告。再次生成或后台任务会继续处理。</p>}
-      {usable?<ReportBody body={current.body}/>:<div className="report-empty"><FileText size={28}/><h3>{digestLabel(current)==='等待分析'?'还在等待可用的分析结果':current.details?.legacyEmpty?'这是一份旧空简报':current.status==='empty'?'当前要求下暂无可用资讯':'这次没有生成报告'}</h3><p>{current.error||'点击上方“检索并生成报告”获取新的结果。没有内容的报告不会推送。'}</p></div>}
+      {usable?<ReportBody body={current.body}/>:<div className="report-empty"><FileText size={28}/><h3>{digestLabel(current)==='还未生成报告'?'还在等待可用的分析结果':current.details?.legacyEmpty?'这是一份旧空简报':current.status==='empty'?'当前要求下暂无可用资讯':'这次没有生成报告'}</h3><p>{current.error||'点击上方“检索并生成报告”获取新的结果。没有内容的报告不会推送。'}</p></div>}
     </article>:<div className="report-empty"><FileText size={32}/><h2>报告会出现在这里</h2><p>点击上方“检索并生成报告”，查看整理后的资讯、事实与观点，以及需要时再读的原文链接。</p></div>}
     <details className="automation-details report-history"><summary>历史报告</summary><div className="digest-history-list">{data.digests.map(d=><button key={d.id} onClick={()=>{setSelected(d.id);setNotice(null);}}><span>{d.date} · {d.details?.manual?'聚合报告':d.preview?'历史预览':'每日报告'}</span><small>{digestLabel(d)}</small><time>{dateTime(d.createdAt)}</time></button>)}{!data.digests.length&&<p>暂无记录。</p>}</div></details></>}
     {view==='settings'&&!data&&<p>先返回报告页输入管理口令，再管理设置。</p>}

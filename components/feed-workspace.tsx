@@ -48,12 +48,12 @@ export default function FeedWorkspace(){
    let collection:APIResult={};if(!reportId){setNotice('正在检查订阅来源…');collection=await api('/collect','POST');if(collection.stage==='busy')throw Error(collection.message||'后台正在运行。');}
    let report:APIResult={},id=reportId,processed=-1;
    for(let batch=0;batch<3;batch++){
-     setNotice(`正在处理第 ${batch+1} 批；每批最多分析 ${data?.policy.deepLimit||6} 个事件，不会发送消息。`);
+     setNotice('正在分析还未处理的资讯，完成后会生成报告。这一步不会发送消息。');
      report=await api('/report','POST',id?{reportId:id}:{});if(report.stage==='busy')throw Error(report.message||'后台正在运行。');id=report.digestId;reportTarget.current=id||'';
      const activity=await api<ReportActivity>('/progress'+(id?'?reportId='+encodeURIComponent(id):''));setReportActivity(activity);
      if(!id||report.complete||!report.canContinue||(report.processed??0)<=processed)break;processed=report.processed??0;
    }
-   await refresh();setNotice((report.message||'请查看实际处理结果。')+(!report.complete&&report.canContinue?' 本次最多连续处理 3 批，请点击“继续这份报告”处理剩余文章。':'')+(collection.failures?.length?` ${collection.failures.length} 个来源读取失败，资讯范围可能不完整。`:''));setNoticeError(!!collection.failures?.length||!!report.failures?.length);return id;
+   await refresh();setNotice((report.message||'请查看实际处理结果。')+(!report.complete&&report.canContinue?' 还有文章未分析，请点击“继续这份报告”。':'')+(collection.failures?.length?` ${collection.failures.length} 个来源读取失败，资讯范围可能不完整。`:''));setNoticeError(!!collection.failures?.length||!!report.failures?.length);return id;
    }catch(e){setNotice(errorText(e));setNoticeError(true);await refresh();throw e;}finally{setReporting(false);}
  });
  const disconnect=()=>{revision.current++;controller.current?.abort();token.current='';setConnected(false);setData(null);setEvents([]);setLoadedEvents(false);setCredential('');setSettingsOpen(false);setReduce(null);setReadError('');setReading(false);setNotice('');setMode('all');};
