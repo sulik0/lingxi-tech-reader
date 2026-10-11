@@ -109,16 +109,19 @@ async function deliverDigest(store:AutomationStore,env:AutomationEnv,digest:Dige
 }
 
 /** Send the saved report without collecting or regenerating it. */
-export async function sendReport(env:AutomationEnv,id:string,now=Date.now(),fetcher:typeof fetch=fetch) {
+export async function sendReport(env:AutomationEnv,id:string,now=Date.now(),fetcher:typeof fetch=fetch,channels:Channel[]=['feishu']) {
   if(!env.DB)throw new AutomationError('后台数据库尚未配置。',503);
+  if(!Array.isArray(channels)||!channels.length||channels.length>3||new Set(channels).size!==channels.length||channels.some(c=>!['email','wecom','feishu'].includes(c)))throw new AutomationError('请选择有效的发送渠道。');
   const store=new AutomationStore(env.DB);
   const holder=await store.acquire(now);if(!holder)throw new AutomationError('已有任务在运行，请稍后刷新报告。',409);
   try {
     const digest=await store.digest(id);
-    if(!digest||!digest.details?.manual)throw new AutomationError('请先生成一份聚合报告，再推送到飞书。',404);
+    if(!digest||!digest.details?.manual)throw new AutomationError('请先生成一份聚合报告，再选择发送渠道。',404);
     if(digest.status!=='ready'||!digest.body||!digest.details.eventCount)throw new AutomationError('这份报告还没有可发送的内容，请先完成分析。',409);
-    const delivery=(await store.deliveries(id)).find(d=>d.channel==='feishu');
-    if(now-digest.createdAt>=23*3600000&&delivery?.status!=='sent')throw new AutomationError('这份报告已超过发送时限，请重新检索并生成报告。',409);
-    return await deliverDigest(store,env,digest,await store.settings(),['feishu'],now,fetcher);
+    const deliveries=await store.deliveries(id),settings=await store.settings(),ready=channelReady(env);
+    if(now-digest.createdAt>=23*3600000&&channels.some(c=>!deliveries.some(d=>d.channel===c&&d.status==='sent')))throw new AutomationError('这份报告已超过发送时限，请重新检索并生成报告。',409);
+    if(channels.some(c=>!ready[c]))throw new AutomationError('所选渠道尚未配置，请先在设置中检查。',409);
+    if(channels.includes('email')&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(settings.emailTo))throw new AutomationError('请先在设置中填写有效的收件邮箱。',409);
+    return await deliverDigest(store,env,digest,settings,channels,now,fetcher);
   }finally{await store.release(holder);}
 }

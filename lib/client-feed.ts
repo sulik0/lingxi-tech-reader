@@ -23,4 +23,11 @@ export function keywordChanges(before:string[],after:string[]){return {added:aft
 export function policyWithExclusions(policy:CollectionPolicy,words:string[]):CollectionPolicy{return {...policy,exclude:[...new Set([...policy.exclude,...words])]};}
 export function formatTime(value:number){return value?new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}):'发布时间未知';}
 
+export function latestReport(digests:Digest[]){return digests.filter(d=>!d.details?.legacyEmpty&&(d.details?.manual||!d.preview)).sort((a,b)=>b.createdAt-a.createdAt)[0];}
+export function reportContentKey(report?:Digest){return report?.body?.trim().replace(/^#[^\n]*\n?/,'').trim()||'';}
+export function canSendReport(report:Digest|undefined,channel:Channel,data:Snapshot){
+ const row=data.deliveries.find(d=>d.digest_id===report?.id&&d.channel===channel);
+ return !!(report?.details?.manual&&report.status==='ready'&&report.body&&!report.details.legacyEmpty&&Date.now()-report.createdAt<23*3600000&&data.services[channel]&&(channel!=='email'||/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.settings.emailTo))&&!['sent','sending','uncertain'].includes(row?.status||'')&&(row?.attempts||0)<3);
+}
+
 export function modelUsageLabel(stage:string){const repair=stage.endsWith('_repair'),name=repair?stage.slice(0,-7):stage;const labels:Record<string,string>={policy:'偏好解析',screen:'Jev 判断阅读价值',screen_check:'Jev 连接检查',jev_route:'Jev 合并同一新闻的报道',jev_evidence:'Jev 选取原文片段',jev_novelty:'Jev 判断新增信息',group:'AI 合并重复报道',analysis:'AI 分析文章',analysis_initial:'AI 首次生成报告',analysis_incremental:'AI 更新已有报告'};return (labels[name]||'其他模型调用')+(repair?'（修复未通过检查的结果）':'');}

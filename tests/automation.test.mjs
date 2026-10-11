@@ -447,3 +447,19 @@ test('progress endpoint is authenticated and exposes counts without article iden
  const url='https://site.test/api/automation/progress';assert.equal((await handleAutomation(new Request(url),environment)).status,401);
  const response=await handleAutomation(new Request(url,{headers:{Authorization:'Bearer '+environment.AUTOMATION_TOKEN}}),environment),raw=await response.text();assert.equal(response.status,200);assert.equal(JSON.parse(raw).report.details.progress.total,1);assert.ok(!raw.includes('private-article')&&!raw.includes('private-key')&&!raw.includes('private report'));assert.equal((await store.runs()).length,0);DB.close();
 });
+
+test('explicit report channels are independent of automatic settings and retain separate duplicate protection',async()=>{
+ const DB=d1(),store=new AutomationStore(DB),environment=env(DB),calls=[];await store.addSource(source);await store.saveSettings({...defaultSettings,emailTo:'reader@example.test'});await runAutomation(environment,'collect',now,mockFetch([]));const r=await runAutomation(environment,'report',now+1,mockFetch([]));const body=(await store.digest(r.digestId)).body;
+ await sendReport(environment,r.digestId,now+2,mockFetch(calls),['wecom']);assert.equal(calls.length,1);assert.equal((await store.deliveries())[0].channel,'wecom');await sendReport(environment,r.digestId,now+3,mockFetch(calls),['feishu','email']);assert.equal(calls.length,3);assert.equal((await store.deliveries()).filter(d=>d.status==='sent').length,3);await sendReport(environment,r.digestId,now+4,mockFetch(calls),['wecom','email','feishu']);assert.equal(calls.length,3);assert.deepEqual(await store.settings(),{...defaultSettings,emailTo:'reader@example.test'});assert.equal((await store.digest(r.digestId)).body,body);DB.close();
+});
+test('invalid or unconfigured channel selections fail before any delivery is attempted',async()=>{
+ const DB=d1(),store=new AutomationStore(DB),environment=env(DB),calls=[];await store.addSource(source);await runAutomation(environment,'collect',now,mockFetch([]));const r=await runAutomation(environment,'report',now+1,mockFetch([]));
+ for(const channels of [[],['feishu','feishu'],['invented']])await assert.rejects(sendReport(environment,r.digestId,now+2,mockFetch(calls),channels),/有效的发送渠道/);
+ await assert.rejects(sendReport(environment,r.digestId,now+2,mockFetch(calls),['email']),/收件邮箱/);
+ await assert.rejects(sendReport({...environment,WECOM_WEBHOOK_URL:undefined},r.digestId,now+2,mockFetch(calls),['feishu','wecom']),/尚未配置/);assert.equal(calls.length,0);assert.equal((await store.deliveries()).length,0);DB.close();
+});
+test('channel selection endpoint rejects malformed choices while preserving authentication and origin checks',async()=>{
+ const DB=d1(),environment=env(DB),url='https://site.test/api/automation/reports/report:unknown/send',headers={Authorization:'Bearer '+environment.AUTOMATION_TOKEN,origin:'https://site.test','Content-Type':'application/json'};
+ for(const body of ['invalid','null','[]','{"channels":[]}','{"channels":["feishu","feishu"]}','{"channels":["unknown"]}'])assert.equal((await handleAutomation(new Request(url,{method:'POST',headers,body}),environment)).status,400);
+ assert.equal((await handleAutomation(new Request(url,{method:'POST',headers:{...headers,origin:'https://evil.test'},body:'{"channels":["email"]}'}),environment)).status,403);DB.close();
+});

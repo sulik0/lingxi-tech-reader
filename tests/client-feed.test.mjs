@@ -22,3 +22,10 @@ test('feedback keeps budget and previous topics; diff and link helpers avoid mis
  assert.deepEqual(keywordChanges(['汽车','AI'],['AI','Agent']),{added:['Agent'],removed:['汽车'],kept:['AI']});
  assert.equal(topic(event('a')),'科技资讯');assert.equal(safeLink('javascript:alert(1)'),null);assert.equal(safeLink('https://user:pass@example.com'),null);assert.equal(safeLink('https://example.test/a'),'https://example.test/a');
 });
+
+test('homepage selects only the latest report, never disguises an empty new result as an old ready report',async()=>{
+ const {latestReport,reportContentKey,canSendReport}=await import('../lib/client-feed.ts');
+ const old={id:'report:old',status:'ready',body:'# 旧日期\n\n自编内容',createdAt:Date.now()-1000,preview:true,details:{manual:true}},empty={...old,id:'report:new',status:'empty',body:'',createdAt:Date.now()};
+ assert.equal(latestReport([old,empty]).id,empty.id);assert.equal(latestReport([{...old,id:'legacy',createdAt:Date.now()+10,details:{legacyEmpty:true}},old]).id,old.id);assert.equal(reportContentKey(old),reportContentKey({...old,body:'# 新日期\n\n自编内容'}));
+ const data={services:{feishu:true,wecom:false,email:true},settings:{emailTo:'reader@example.test'},deliveries:[]};assert.equal(canSendReport(old,'feishu',data),true);assert.equal(canSendReport(old,'wecom',data),false);assert.equal(canSendReport(old,'email',{...data,settings:{emailTo:''}}),false);assert.equal(canSendReport(old,'feishu',{...data,deliveries:[{digest_id:old.id,channel:'feishu',status:'uncertain',attempts:1}]}),false);assert.equal(canSendReport({...old,createdAt:Date.now()-24*3600000},'feishu',data),false);
+});

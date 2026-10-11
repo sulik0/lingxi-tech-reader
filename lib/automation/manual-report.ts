@@ -14,7 +14,7 @@ export async function runManualReport(store:AutomationStore,env:AutomationEnv,no
   let digest:Digest;
   if(reportId){
     const saved=await store.digest(reportId);
-    if(!saved?.details?.manual||!saved.details.scope)throw new AutomationError('这份旧报告不能继续添加内容。请点击“检查新资讯并分析”生成新报告。',409);
+    if(!saved?.details?.manual||!saved.details.scope)throw new AutomationError('这份旧报告不能继续添加内容。请点击“检索并生成报告”生成新报告。',409);
     if(saved.details.scope.policyKey!==key)throw new AutomationError('偏好或初筛要求已改变，请生成新报告，避免混用不同要求。',409);
     if(now-saved.createdAt>=23*3600000)throw new AutomationError('这份报告已超过 23 小时，请生成新报告。',409);
     if((await store.deliveries(reportId)).some(d=>['sent','sending','uncertain'].includes(String(d.status))))throw new AutomationError('这份报告已经发送或正在确认送达，不能改写；请生成新报告。',409);
@@ -45,7 +45,7 @@ export async function runManualReport(store:AutomationStore,env:AutomationEnv,no
     progress.completed=selection.articleCount;progress.filtered=screened.skipped;progress.pending=pending;
     progress.failures=[...new Set(failures)].slice(0,20);
     progress.stage=pending?(failures.length?'failed':'paused'):'complete';
-    progress.message=pending?(failures.length?'分析遇到问题，成功分析的内容已保留。请查看下方原因，恢复后点击“继续这份报告”。':'还有文章未分析。点击“继续这份报告”处理剩余内容，成功分析的内容会保留。'):(selection.events.length?'本次选定资讯已全部处理，报告已完成。':'这次没有符合要求、可以加入报告的资讯。');
+    progress.message=pending?(failures.length?'分析遇到问题，成功分析的内容已保留。请查看下方原因，恢复后点击“重试未完成的资讯”。':'还有文章未分析。点击“重试未完成的资讯”处理剩余内容，成功分析的内容会保留。'):(selection.events.length?'本次选定资讯已全部处理，报告已完成。':'这次没有符合要求、可以加入报告的资讯。');
     digest.status=selection.events.length?'ready':pending?'waiting':'empty';
     digest.body=selection.events.length?renderEvents(digest.date,selection.events,[],pending>0).replace('# 灵析每日科技简报','# 灵析科技聚合报告'):'';
     if(pending&&digest.body)digest.body+=`\n\n本次有 ${pending} 篇文章尚未处理完成，未包含在这份报告中。`;

@@ -44,7 +44,12 @@ export async function handleAutomation(request:Request,env:AutomationEnv) {
     if(request.method==='POST'&&['/collect','/preview','/run'].includes(path))return json(await runAutomation(env,path==='/collect'?'collect':path==='/preview'?'preview':'scheduled'));
     const encodedReportID=path.match(/^\/reports\/([^/]{1,320})\/send$/)?.[1];
     let reportID='';if(encodedReportID){try{reportID=decodeURIComponent(encodedReportID);}catch{throw new AutomationError('报告编号无效。');}if(!/^report:[a-zA-Z0-9:-]{1,100}$/.test(reportID))throw new AutomationError('报告编号无效。');}
-    if(request.method==='POST'&&reportID)return json(await sendReport(env,reportID));
+    if(request.method==='POST'&&reportID){
+      const text=await request.text();if(text.length>500)throw new AutomationError('发送请求过大。');let body:any={};
+      try{if(text)body=JSON.parse(text);}catch{throw new AutomationError('发送请求不是有效 JSON。');}
+      if(!body||typeof body!=='object'||Array.isArray(body)||body.channels!==undefined&&(!Array.isArray(body.channels)||!body.channels.length||body.channels.length>3||new Set(body.channels).size!==body.channels.length||body.channels.some((c:unknown)=>typeof c!=='string'||!['email','wecom','feishu'].includes(c))))throw new AutomationError('请选择有效的发送渠道。');
+      return json(await sendReport(env,reportID,Date.now(),fetch,body.channels));
+    }
     if(!request.headers.get('content-type')?.includes('application/json'))throw new AutomationError('需要 JSON 正文。',415);
     const raw=await request.text();if(raw.length>8000)throw new AutomationError('设置内容过大。',413);
     let body:any;try{body=JSON.parse(raw);}catch{throw new AutomationError('设置不是有效 JSON。');}
