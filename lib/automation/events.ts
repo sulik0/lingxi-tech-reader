@@ -1,4 +1,6 @@
 import {filterArticles} from './screening.ts';
+import {screeningEnv} from './policy.ts';
+import {processEvidenceEvents} from './optimized-events.ts';
 import {policyKey} from './policy.ts';
 import {meteredFetch} from './meter.ts';
 import {isRoundup} from '../roundup.ts';
@@ -26,6 +28,7 @@ export async function processEvents(store:AutomationStore,env:AutomationEnv,now:
   const incoming=screened.articles.slice(0,policy.deepLimit);
   if(!incoming.length)return;
   if(!configured(env)){await store.saveEvents(incoming.map(a=>pendingEvent([a],now)));return;}
+  if(policy.screenEnabled&&screeningEnv(env))return processEvidenceEvents(store,env,incoming,now,fetcher,stats,options);
   const existing=await store.events();
   // Reconsider recent events along with new reports. Never discard an event's hidden articles.
   const candidates:CollectedArticle[]=[];

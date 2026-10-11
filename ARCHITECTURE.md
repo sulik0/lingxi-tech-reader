@@ -8,10 +8,11 @@ Cloudflare Worker 负责采集、分析和发送，D1 保存来源、文章、�
 | --- | --- |
 | `lib/automation/feeds.ts` | 校验来源地址，解析 RSS/Atom，清理正文和跟踪参数。 |
 | `lib/automation/store.ts`、`db/schema.ts`、`drizzle/` | 保存文章、事件、发送队列、历史记录和任务锁。 |
-| `lib/roundup.ts`、`lib/automation/digest.ts` | 将明确的多主题早报单独保留，其他文章由模型按具体事件分组，检查 ID 是否完整且不重复。 |
+| `lib/roundup.ts`、`lib/automation/digest.ts` | 将明确的多主题早报单独保留，未启用 Jev 时由 DeepSeek 按具体事件分组，检查 ID 是否完整且不重复。 |
 | `lib/automation/policy.ts`、`screening.ts`、`jev.ts` | 解析搜集要求，先匹配关键词，再调用 Jev 判断阅读价值并保存筛选结果。 |
 | `lib/automation/meter.ts` | 按阶段记录服务返回的 Token 用量，缺少统计时保留未知状态。 |
-| `lib/automation/events.ts` | 比较新报道和近期事件，分析正文，保存统一事件，并把这些事件排成每日简报。 |
+| `lib/automation/events.ts`、`optimized-events.ts` | 选择 Jev 或兼容处理方式，复用旧分析、处理新增信息，保存事件并编排简报。 |
+| `lib/automation/evidence.ts`、`jev-decisions.ts` | 用程序查找候选与完全重复内容，调用 Jev 判断归类、片段价值和新增信息，缓存经过校验的判断。 |
 | `lib/analyze.ts` | 调用模型，检查正文引文、评分与推荐文章 ID；提供八类分析结果。 |
 | `lib/automation/selection.ts`、`lib/automation/runner.ts` | 选择已经分析的内容，未完成文章继续排队；有内容时冻结简报并发送，保留等待、错误和渠道结果。 |
 | `lib/automation/manual-report.ts` | 固定一次手动报告的文章范围，分批处理、保存进度，并在同一报告上继续汇总。 |
@@ -33,8 +34,11 @@ flowchart TD
   B --> C[D1 文章与永久去重记录]
   C --> P[关键词筛选与可选 Jev 初筛]
   P --> D[通过筛选的文章和近期事件]
-  D --> E[模型按具体事件分组]
-  E --> F[正文交叉分析与引用检查]
+  D --> E[Jev 归类或 DeepSeek 兼容分组]
+  E --> V[Jev 选择原文片段与判断新增信息]
+  V --> U{需要更新分析吗}
+  U -->|否| G
+  U -->|是| F[DeepSeek 分析选中的片段并检查引用]
   F --> G[D1 统一事件]
   G --> H[保存手动聚合报告]
   G --> M[浏览器聚合资讯列表]
@@ -47,7 +51,7 @@ flowchart TD
   K --> L[D1 发送记录]
 ```
 
-文章去重与事件分组分别处理：相同来源重复返回同一 ID、清理后的 URL 或相同正文，不再次入库；不同来源相同正文仍保留来源归属，分析时只提交一份正文并标记转载没有新增信息。不同正文交给模型比较，不能仅凭关键词认定为重复。
+文章去重与事件分组分别处理：相同来源重复返回同一 ID、清理后的 URL 或相同正文，不再次入库；不同来源相同正文仍保留来源归属，分析时只提交一份正文并标记转载没有新增信息。不同正文由 Jev 比较事件与新增内容，不能仅凭关键词认定为重复。全文仍保留，自动分析优先只提交选中的原文片段；更新时携带旧结论与一篇代表文章的引文。关闭 Jev 时沿用全文方式。
 
 设置中点击“检查新资讯并分析”时，先采集入库，再分析已有文章并保存报告，生成步骤不重复采集、不自动发送。首页刷新只读取数据，确认保存偏好只写策略。点击推送时只发送指定报告编号对应的正文，不受每日开关和时间限制。接口与限制集中维护在[自动订阅与推送](docs/automation.md)。
 
@@ -60,7 +64,7 @@ flowchart TD
 | React 19、TypeScript、Vinext/Vite | 提供阅读交互、检查字段，并构建 Cloudflare Worker。 |
 | Cloudflare Workers、D1 | 页面和后台使用同一个运行环境；文章与事件不依赖开发电脑保存。 |
 | fast-xml-parser | 解析 RSS/Atom，配合大小限制和实体检查处理不可信内容。 |
-| Jev 的 System One HTTP API | 批量提出 Score 问题，依据分数和把握程度决定是否进一步分析。 |
+| Jev 的 System One HTTP API | Score 判断阅读价值，Choice 判断归类，Noul 判断片段价值与新增信息；不生成文本。 |
 | Chat Completions 与 JSON mode | 通过兼容接口调用模型；当前用户指定 DeepSeek Flash。 |
 | 页面内存 | 只保留本次管理口令与操作状态，报告和设置从 D1 读取。 |
 | localStorage | 收藏只保存事件与成员文章 ID，用于当前浏览器恢复，不同步到服务端。 |

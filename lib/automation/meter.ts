@@ -14,7 +14,8 @@ export function meteredFetch(fetcher:typeof fetch,store:AutomationStore,stage:st
       return response;
     }finally{
       // Logging must not cause an otherwise successful request to be repeated.
-      await store.recordUsage(stage,model,prompt,completion).catch(()=>{});
+      let recordedStage=stage;try{if(typeof init?.body==='string'&&stage.startsWith('analysis')&&JSON.parse(init.body).messages?.length>2)recordedStage=stage+'_repair';}catch{}
+      await store.recordUsage(recordedStage,model,prompt,completion).catch(()=>{});
     }
   };
 }

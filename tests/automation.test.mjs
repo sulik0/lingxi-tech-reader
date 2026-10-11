@@ -306,7 +306,7 @@ test('report includes links to other sources in addition to the recommended arti
  assert.match(body,/原文：https:\/\/article.example\/a/);assert.match(body,/参考：自编来源 B｜https:\/\/article.example\/b/);
 });
 
-function jevResponse(body,score=3,confidence=0.9){return Response.json({model:'jev-1.13.0',answers:Object.fromEntries(Object.keys(body.questions).map(id=>[id,{type:'score',score,confidence,probabilities:Object.fromEntries([0,1,2,3,4].map(n=>[n,n===Math.floor(score)?1-(score%1):n===Math.ceil(score)?score%1:0]))}])),usage:{input_tokens:123,output_tokens:14}});}
+function jevResponse(body,score=3,confidence=0.9){return Response.json({model:'jev-1.13.0',answers:Object.fromEntries(Object.keys(body.questions).map(id=>[id,body.questions[id].type==='noul'?{type:'noul',noul:.95}:body.questions[id].type==='choice'?{type:'choice',choice:'new',confidence:.95,probabilities:Object.fromEntries(Object.keys(body.questions[id].criteria).map(k=>[k,k==='new'?1:0]))}:{type:'score',score,confidence,probabilities:Object.fromEntries([0,1,2,3,4].map(n=>[n,n===Math.floor(score)?1-(score%1):n===Math.ceil(score)?score%1:0]))}])),usage:{input_tokens:123,output_tokens:14}});}
 test('collection requirements parse negation locally, expand topics and prioritize exclusions',async()=>{
  assert.deepEqual(parseLocalInstruction('不关注汽车手机'),{include:[],exclude:['汽车','手机']});
  assert.deepEqual(parseLocalInstruction('关注 AI 和芯片，不关注汽车手机'),{include:['AI','芯片'],exclude:['汽车','手机']});

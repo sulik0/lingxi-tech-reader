@@ -64,3 +64,17 @@ npm run build
 前端辅助逻辑由 `tests/client-feed.test.mjs` 检查：真实时间排序、排除待分析与演示事件、整组关键词筛选、收藏随分组变化恢复、取消收藏、安全链接、偏好变更比较及预算保留。浏览器检查范围和限制见上文。
 
 搜集策略测试覆盖否定解析、主题词、排除优先、Jev 官方请求格式、低把握保留、缓存与版本变化、每轮预算、初筛失败不调用完整分析、已完成事件复用、同源配置接口与缺失用量统计。使用自编正文和模拟模型响应，不代表真实 Jev 密钥或判断质量已经验收。
+
+## 降本对照与新增回归
+
+`tests/optimization.test.mjs` 使用模拟服务、内存 SQLite 和自编内容，检查片段缓存、引用范围、重要更新、失败保留旧报告、不同版本分开、原文很多但所选片段很少的输入，以及 100 篇受控重复文章不增加 DeepSeek 请求。另检查定时日报生成、飞书协议与重复发送保护。这些是行为测试，不能冒充真实模型 Token 或真实多媒体归类质量。
+
+真实模型对照脚本读取本地 `.dev.vars`，只允许调用 DeepSeek 与 Jev 官方模型端点，不修改线上数据库、不采集、不发送机器人消息：
+
+```sh
+node scripts/benchmark-optimization.mjs work/optimization/corpus.json
+```
+
+需要 Node.js 22.13+ 和 Python 3。可用 `LINGXI_BENCH_PYTHON` 指定 Python 路径。输入为 `{ "batches": [{ "phase": "initial", "articles": [...] }, { "phase": "duplicate", "articles": [...] }, { "phase": "incremental", "articles": [...] }] }`。文章包含 `id`、`title`、`source`、`author`、`content`、真实 `url`；发布时间由脚本统一到本次验收时间，避免日期筛选造成不同输入。基线与优化分别使用空数据库；基线保留 Jev 阅读价值筛选，但运行旧 DeepSeek 分组与全文分析。全部文章必须通过相同初筛，否则停止对照。
+
+脚本将两种流程的事件、报告、调用阶段、服务返回 Token、缓存命中与未命中数写入被忽略的 `work/optimization/`。未知统计不视为零。不要提交文章、结果正文或密钥；应只把汇总数字、质量检查和样本限制写入[验收记录](acceptance.md)。模型输出存在随机变化，这次测得的降幅不代表所有文章的固定降幅。
