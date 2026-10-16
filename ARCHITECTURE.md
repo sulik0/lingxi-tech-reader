@@ -20,7 +20,7 @@ Cloudflare Worker 负责采集、分析和发送，D1 保存来源、文章、�
 | `lib/automation/api.ts` | 检查管理员口令，提供配置、事件读取、分组修正与任务接口。 |
 | `app/page.tsx`、`components/feed-workspace.tsx`、`lib/client-feed.ts` | 读取当前报告快照，管理连接与一键检索、自动继续、进度和错误状态。 |
 | `components/feed-preferences.tsx`、`components/feed-report.tsx` | 确认偏好变更，展示当前报告并选择发送渠道。 |
-| `components/feed-dialog.tsx`、`components/feed-settings.tsx`、`components/report-body.tsx` | 设置弹窗维护来源与推送配置，报告组件直接在首页展示正文。 |
+| `components/feed-dialog.tsx`、`components/feed-settings.tsx`、`components/report-body.tsx` | 设置弹窗维护来源与推送配置，报告组件将已保存正文解析为资讯卡片，默认折叠事实与观点。 |
 | `lib/automation/presentation.ts` | 区分等待、生成和发送状态，支持选择历史记录。 |
 | `lib/event-state.ts` | 文章集合改变时，清除旧分析和推荐。 |
 | `build/sites-worker.ts` | 提供页面、API 与 scheduled 定时入口。 |

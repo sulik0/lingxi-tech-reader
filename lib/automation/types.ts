@@ -20,6 +20,10 @@ export const suggestedFeeds = [
   {name:'IT之家（网站 RSS）',url:'https://www.ithome.com/rss/'},
   {name:'极客公园（网站 RSS）',url:'https://www.geekpark.net/rss'},
   {name:'宝玉的分享（博客 RSS）',url:'https://s.baoyu.io/feed.xml'},
+  {name:'Solidot（科技新闻）',url:'https://www.solidot.org/index.rss'},
+  {name:'少数派（数字生活）',url:'https://sspai.com/feed'},
+  {name:'Ars Technica（科技深度报道）',url:'https://feeds.arstechnica.com/arstechnica/index'},
+  {name:'TechCrunch（科技与创业）',url:'https://techcrunch.com/feed/'},
 ];
 export type CollectedArticle = {id:string;source:string;title:string;author:string;content:string;url:string;publishedAt:number;collectedAt:number;contentHash:string};
 export type ReportProgress = {stage:'screening'|'analyzing'|'rendering'|'paused'|'failed'|'complete';total:number;completed:number;filtered:number;pending:number;batchCompleted:number;batchTotal:number;rounds:number;updatedAt:number;failures:string[];message:string};
