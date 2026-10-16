@@ -25,7 +25,7 @@ function d1(){const sql=new DatabaseSync(':memory:');for(const entry of JSON.par
   const wrap=(text,args=[])=>({bind(...params){return wrap(text,params)},async first(){return sql.prepare(text).get(...args)||null},async all(){return {results:sql.prepare(text).all(...args),success:true,meta:{}}},async run(){const r=sql.prepare(text).run(...args);return {results:[],success:true,meta:{changes:Number(r.changes)}}}});
   return {prepare:wrap,async batch(statements){sql.exec('BEGIN');try{const r=[];for(const s of statements)r.push(await s.run());sql.exec('COMMIT');return r;}catch(e){sql.exec('ROLLBACK');throw e;}},close(){sql.close()}};
 }
-function env(DB){return {DB,AUTOMATION_TOKEN:'a'.repeat(32),FEED_ALLOWED_HOSTS:'feed.example',LLM_API_KEY:'fake-model-key',LLM_BASE_URL:'https://model.example/v1',LLM_MODEL:'fake-model',RESEND_API_KEY:'fake-email-key',EMAIL_FROM:'sender@example.test',WECOM_WEBHOOK_URL:'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=fake',FEISHU_WEBHOOK_URL:'https://open.feishu.cn/open-apis/bot/v2/hook/fake'};}
+function env(DB){return {DB,FEED_ALLOWED_HOSTS:'feed.example',LLM_API_KEY:'fake-model-key',LLM_BASE_URL:'https://model.example/v1',LLM_MODEL:'fake-model',RESEND_API_KEY:'fake-email-key',EMAIL_FROM:'sender@example.test',WECOM_WEBHOOK_URL:'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=fake',FEISHU_WEBHOOK_URL:'https://open.feishu.cn/open-apis/bot/v2/hook/fake'};}
 function modelResult(articles){return {sameEvent:true,title:'示例模型发布',summary:'新增本地部署功能。',points:['提供本地部署选择。'],facts:[{text:'新增本地部署',status:'待核验',sources:[articles[0].id],evidence:'示例模型新增本地部署功能。'}],opinions:[],evaluations:articles.map(a=>({id:a.id,metrics:[80,60,70,70],hype:'低',duplicate:10,reason:'保留可定位的事实原句。',extra:'解释部署方式。',flags:[]})),conclusion:'需要核对原文的部署要求。',uncertainty:'实际效果尚未验证。'};}
 function mockFetch(calls,options={}){return async(url,init={})=>{
   if(url==='https://feed.example/rss'){if(options.feedFails)return new Response('',{status:503});return new Response(rss(options.short?'仅有短摘要。':content));}
@@ -121,12 +121,23 @@ test('uncertain robot delivery is not blindly retried; failed collection never s
   await runAutomation(environment,'scheduled',now,mockFetch(calls,{timeout:true}));await runAutomation(environment,'scheduled',now+900000,mockFetch(calls,{timeout:true}));assert.equal(calls.length,1);assert.equal((await store.deliveries())[0].status,'uncertain');
   await assert.rejects(runAutomation(environment,'scheduled',now+86400000,mockFetch(calls,{feedFails:true})),/全部订阅源/);assert.equal(await store.digest('2026-10-10'),null);DB.close();
 });
-test('automation API requires a management token and same-origin writes',async()=>{
+test('automation API opens locally without a password and retains private hosting and same-origin checks',async()=>{
   const DB=d1(),environment=env(DB);
-  assert.equal((await handleAutomation(new Request('https://site.test/api/automation'),environment)).status,401);
-  const request=new Request('https://site.test/api/automation/settings',{method:'PATCH',headers:{authorization:'Bearer '+environment.AUTOMATION_TOKEN,origin:'https://evil.test','content-type':'application/json'},body:JSON.stringify(defaultSettings)});
+  assert.equal((await handleAutomation(new Request('https://untrusted.example/api/automation'),environment)).status,401);
+  const request=new Request('http://localhost/api/automation/settings',{method:'PATCH',headers:{origin:'https://evil.test','content-type':'application/json'},body:JSON.stringify(defaultSettings)});
   assert.equal((await handleAutomation(request,environment)).status,403);
-  assert.equal((await handleAutomation(new Request('https://site.test/api/automation',{headers:{authorization:'Bearer '+environment.AUTOMATION_TOKEN}}),environment)).status,200);DB.close();
+  assert.equal((await handleAutomation(new Request('http://localhost/api/automation',{headers:{}}),environment)).status,200);DB.close();
+});
+test('private Sites access replaces the application password without accepting arbitrary hosts or cross-origin writes',async()=>{
+ const DB=d1(),environment={...env(DB),SITES_PRIVATE_AUTOMATION:'1'},base='https://reader.chatgpt.site';
+ assert.equal((await handleAutomation(new Request(base+'/api/automation'),environment)).status,200);
+ assert.equal((await handleAutomation(new Request(base+'/api/automation'),env(DB))).status,401);
+ assert.equal((await handleAutomation(new Request('https://reader.chatgpt.site.evil.test/api/automation'),environment)).status,401);
+ assert.equal((await handleAutomation(new Request(base+'/api/automation/settings',{method:'PATCH',headers:{origin:base,'Content-Type':'application/json'},body:JSON.stringify(defaultSettings)}),environment)).status,200);
+ assert.equal((await handleAutomation(new Request(base+'/api/automation/tick',{method:'POST',headers:{origin:'https://evil.test'}}),environment)).status,403);
+ assert.equal((await handleAutomation(new Request('http://127.0.0.1/api/automation'),env(DB))).status,200);
+ assert.equal((await handleAutomation(new Request('http://[::1]/api/automation'),env(DB))).status,200);
+ DB.close();
 });
 test('pausing delivery still collects enabled sources without sending',async()=>{
   const DB=d1(),store=new AutomationStore(DB),calls=[];await store.addSource(source);await store.saveSettings(defaultSettings);
@@ -153,8 +164,8 @@ test('tracked URL variations and changing GUIDs do not duplicate an article',asy
 test('events API uses persisted data and splitting clears both groups without losing hidden sources',async()=>{
   const DB=d1(),store=new AutomationStore(DB),environment=env(DB);await store.addSource(source);const a=(await parseFeed(rss(),source,now))[0];await store.addArticles(source.id,[a]);await processEvents(store,environment,now,mockFetch([]));
   const [event]=await store.events();event.articles.push({...event.articles[0],id:'second',source:'已暂停来源'});await store.saveEvents([event]);
-  const headers={authorization:'Bearer '+environment.AUTOMATION_TOKEN,origin:'https://site.test','content-type':'application/json'};
-  const response=await handleAutomation(new Request('https://site.test/api/automation/events/'+event.id+'/split',{method:'POST',headers,body:JSON.stringify({articleId:a.id})}),environment);assert.equal(response.status,200);
+  const headers={origin:'http://localhost','content-type':'application/json'};
+  const response=await handleAutomation(new Request('http://localhost/api/automation/events/'+event.id+'/split',{method:'POST',headers,body:JSON.stringify({articleId:a.id})}),environment);assert.equal(response.status,200);
   const events=await store.events();assert.equal(events.flatMap(e=>e.articles).length,2);assert.ok(events.every(e=>e.pending&&e.groupingLocked&&!e.facts.length));DB.close();
 });
 test('overflow is retained across days and only unreported articles enter the next daily queue',async()=>{
@@ -185,7 +196,7 @@ test('private Sites bootstrap persists chosen sources once and respects a later 
 });
 test('cloud updater bypass is disabled outside the explicitly configured private Sites boundary',async()=>{
  const DB=d1(),environment=env(DB);
- const request=new Request('https://site.test/api/automation/tick',{method:'POST'});assert.equal((await handleAutomation(request,{...environment,SITES_PRIVATE_AUTOMATION:'1'})).status,401);
+ const request=new Request('http://localhost/api/automation/tick',{method:'POST'});assert.equal((await handleAutomation(request,{...environment,SITES_PRIVATE_AUTOMATION:'1'})).status,401);
  const siteRequest=new Request('https://reader.chatgpt.site/api/automation/tick',{method:'POST'});assert.equal((await handleAutomation(siteRequest,environment)).status,401);DB.close();
 });
 
@@ -210,7 +221,7 @@ test('roundups stay separate from specific events and keep their label in robot 
 test('manual reanalysis preserves a useful analysis error instead of a generic server failure',async()=>{
   const DB=d1(),store=new AutomationStore(DB);await store.addSource(source);await store.addArticles(source.id,await parseFeed(rss(),source,now));
   await processEvents(store,{},now);const [event]=await store.events();
-  const response=await handleAutomation(new Request('https://site.test/api/automation/events/'+event.id+'/analyze',{method:'POST',headers:{Authorization:'Bearer '+env(DB).AUTOMATION_TOKEN,origin:'https://site.test','content-type':'application/json'},body:'{}'}),{...env(DB),LLM_API_KEY:undefined});
+  const response=await handleAutomation(new Request('http://localhost/api/automation/events/'+event.id+'/analyze',{method:'POST',headers:{origin:'http://localhost','content-type':'application/json'},body:'{}'}),{...env(DB),LLM_API_KEY:undefined});
   assert.equal(response.status,503);assert.match((await response.json()).message,/AI 服务尚未配置/);assert.equal((await store.events())[0].pending,true);DB.close();
 });
 
@@ -289,13 +300,13 @@ test('ambiguous manual robot sends are recorded and cannot be resent by repeated
  const DB=d1(),store=new AutomationStore(DB),environment=env(DB);await store.addSource(source);await runAutomation(environment,'collect',now,mockFetch([]));const result=await runAutomation(environment,'report',now+1,mockFetch([]));let sends=0;
  const fail=async()=>{sends++;throw Error('timeout');};assert.equal((await sendReport(environment,result.digestId,now+2,fail)).stage,'delivery_uncertain');await sendReport(environment,result.digestId,now+3,fail);assert.equal(sends,1);assert.equal((await store.deliveries(result.digestId))[0].status,'uncertain');DB.close();
 });
-test('manual report send endpoint retains authentication and same-origin checks',async()=>{
- const DB=d1(),environment=env(DB),url='https://site.test/api/automation/reports/report:unknown/send';
- assert.equal((await handleAutomation(new Request(url,{method:'POST'}),environment)).status,401);
- const headers={Authorization:'Bearer '+environment.AUTOMATION_TOKEN,origin:'https://evil.test'};assert.equal((await handleAutomation(new Request(url,{method:'POST',headers}),environment)).status,403);
- assert.equal((await handleAutomation(new Request(url,{method:'POST',headers:{...headers,origin:'https://site.test'}}),environment)).status,404);
+test('manual report send endpoint retains same-origin checks without a password',async()=>{
+ const DB=d1(),environment=env(DB),url='http://localhost/api/automation/reports/report:unknown/send';
+ assert.equal((await handleAutomation(new Request(url,{method:'POST'}),environment)).status,403);
+ const headers={origin:'https://evil.test'};assert.equal((await handleAutomation(new Request(url,{method:'POST',headers}),environment)).status,403);
+ assert.equal((await handleAutomation(new Request(url,{method:'POST',headers:{...headers,origin:'http://localhost'}}),environment)).status,404);
  await new AutomationStore(DB).saveDigest({id:'report:empty',date:'2026-10-09',status:'empty',body:'',error:'',createdAt:now,preview:true,details:{manual:true,eventCount:0}});
- const encoded=new Request('https://site.test/api/automation/reports/'+encodeURIComponent('report:empty')+'/send',{method:'POST',headers:{...headers,origin:'https://site.test'}});assert.equal((await handleAutomation(encoded,environment)).status,409);DB.close();
+ const encoded=new Request('http://localhost/api/automation/reports/'+encodeURIComponent('report:empty')+'/send',{method:'POST',headers:{...headers,origin:'http://localhost'}});assert.equal((await handleAutomation(encoded,environment)).status,409);DB.close();
 });
 test('report selection prefers usable content over failures and honors explicit history choices',()=>{
  const daily={id:'daily',status:'ready',body:'自编报告',preview:false},waiting={id:'report:new',status:'waiting',body:'',preview:true,details:{manual:true}};
@@ -352,7 +363,7 @@ test('unmodified event analysis is reused; bounded processing does not replace h
  const report=await runAutomation(environment,'report',now+2,fetcher);assert.equal(analyses,2);assert.equal((await store.digest(report.digestId)).details.analysisReused,2);DB.close();
 });
 test('policy APIs require authorization, validate rules and persist only reviewed requirements',async()=>{
- const DB=d1(),environment=env(DB),origin='https://site.test',headers={Authorization:'Bearer '+environment.AUTOMATION_TOKEN,origin,'Content-Type':'application/json'};
+ const DB=d1(),environment=env(DB),origin='http://localhost',headers={origin,'Content-Type':'application/json'};
  const call=(path,body)=>handleAutomation(new Request(origin+'/api/automation'+path,{method:path.endsWith('parse')?'POST':'PATCH',headers,body:JSON.stringify(body)}),environment);
  assert.equal((await call('/policy',{...defaultPolicy,deepLimit:99})).status,400);
  const parsed=await (await call('/policy/parse',{instruction:'不关注汽车手机'})).json();assert.deepEqual(parsed.exclude,['汽车','手机']);assert.deepEqual((await new AutomationStore(DB).policy()).exclude,[]);
@@ -385,10 +396,10 @@ test('Jev connection check sends one synthetic article and reports regional reje
  await assert.rejects(checkScreening(environment,async()=>new Response('secret',{status:451})),e=>/地区不可用/.test(e.message)&&!e.message.includes('secret'));await assert.rejects(checkScreening({},async()=>{throw Error('unexpected')}),/尚未配置/);
 });
 test('Jev connection API is protected, records usage, releases its lock and never creates content or deliveries',async()=>{
- const DB=d1(),store=new AutomationStore(DB),environment={...env(DB),JEV_API_KEY:'test-jev'},origin='https://site.test',url=origin+'/api/automation/screening/check';let calls=0;
+ const DB=d1(),store=new AutomationStore(DB),environment={...env(DB),JEV_API_KEY:'test-jev'},origin='http://localhost',url=origin+'/api/automation/screening/check';let calls=0;
  const originalFetch=globalThis.fetch;globalThis.fetch=async(_,init)=>{calls++;return jevResponse(JSON.parse(init.body));};
  try {
-   const headers={Authorization:'Bearer '+environment.AUTOMATION_TOKEN,origin,'Content-Type':'application/json'};
+   const headers={origin,'Content-Type':'application/json'};
    assert.equal((await handleAutomation(new Request(url,{method:'POST',headers:{...headers,origin:'https://evil.test'},body:'{}'}),environment)).status,403);assert.equal(calls,0);
    const response=await handleAutomation(new Request(url,{method:'POST',headers,body:'{}'}),environment);assert.equal(response.status,200);assert.equal((await response.json()).connected,true);assert.equal(calls,1);assert.equal(await store.busy(Date.now()),false);assert.equal((await store.usage(0))[0].stage,'screen_check');assert.equal((await store.deliveries()).length,0);assert.equal((await store.digests()).length,0);assert.equal((await store.events()).length,0);
  }finally{globalThis.fetch=originalFetch;DB.close();}
@@ -444,8 +455,8 @@ test('report continuation rejects legacy, changed-policy, sent and expired repor
 test('progress endpoint is authenticated and exposes counts without article identifiers or report bodies',async()=>{
  const DB=d1(),store=new AutomationStore(DB),environment=env(DB);await store.addSource(source);
  await store.saveDigest({id:'report:progress',date:'2026-10-09',createdAt:now,preview:true,status:'generating',body:'private report',error:'',details:{manual:true,scope:{articleIds:['private-article'],policyKey:'private-key',limited:false},progress:{stage:'screening',total:1,completed:0,filtered:0,pending:1,batchCompleted:0,batchTotal:0,rounds:1,updatedAt:now,failures:[],message:'初筛'}}});
- const url='https://site.test/api/automation/progress';assert.equal((await handleAutomation(new Request(url),environment)).status,401);
- const response=await handleAutomation(new Request(url,{headers:{Authorization:'Bearer '+environment.AUTOMATION_TOKEN}}),environment),raw=await response.text();assert.equal(response.status,200);assert.equal(JSON.parse(raw).report.details.progress.total,1);assert.ok(!raw.includes('private-article')&&!raw.includes('private-key')&&!raw.includes('private report'));assert.equal((await store.runs()).length,0);DB.close();
+ const url='http://localhost/api/automation/progress';assert.equal((await handleAutomation(new Request('https://untrusted.example/api/automation/progress'),environment)).status,401);
+ const response=await handleAutomation(new Request(url,{headers:{}}),environment),raw=await response.text();assert.equal(response.status,200);assert.equal(JSON.parse(raw).report.details.progress.total,1);assert.ok(!raw.includes('private-article')&&!raw.includes('private-key')&&!raw.includes('private report'));assert.equal((await store.runs()).length,0);DB.close();
 });
 
 test('explicit report channels are independent of automatic settings and retain separate duplicate protection',async()=>{
@@ -459,7 +470,7 @@ test('invalid or unconfigured channel selections fail before any delivery is att
  await assert.rejects(sendReport({...environment,WECOM_WEBHOOK_URL:undefined},r.digestId,now+2,mockFetch(calls),['feishu','wecom']),/尚未配置/);assert.equal(calls.length,0);assert.equal((await store.deliveries()).length,0);DB.close();
 });
 test('channel selection endpoint rejects malformed choices while preserving authentication and origin checks',async()=>{
- const DB=d1(),environment=env(DB),url='https://site.test/api/automation/reports/report:unknown/send',headers={Authorization:'Bearer '+environment.AUTOMATION_TOKEN,origin:'https://site.test','Content-Type':'application/json'};
+ const DB=d1(),environment=env(DB),url='http://localhost/api/automation/reports/report:unknown/send',headers={origin:'http://localhost','Content-Type':'application/json'};
  for(const body of ['invalid','null','[]','{"channels":[]}','{"channels":["feishu","feishu"]}','{"channels":["unknown"]}'])assert.equal((await handleAutomation(new Request(url,{method:'POST',headers,body}),environment)).status,400);
  assert.equal((await handleAutomation(new Request(url,{method:'POST',headers:{...headers,origin:'https://evil.test'},body:'{"channels":["email"]}'}),environment)).status,403);DB.close();
 });

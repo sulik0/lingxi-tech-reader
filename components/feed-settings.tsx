@@ -5,7 +5,7 @@ import {channelNames,deliveryNames} from '../lib/automation/presentation';
 import {formatTime,modelUsageLabel,type Snapshot,type ClientRequest} from '../lib/client-feed';
 import type {Channel} from '../lib/automation/types';
 
-export default function FeedSettings({data,locked,request,refresh,savePolicy,disconnect}:{data:Snapshot;locked:boolean;request:ClientRequest;refresh:()=>Promise<unknown>;savePolicy:(p:CollectionPolicy)=>Promise<void>;disconnect:()=>void}){
+export default function FeedSettings({data,locked,request,refresh,savePolicy}:{data:Snapshot;locked:boolean;request:ClientRequest;refresh:()=>Promise<unknown>;savePolicy:(p:CollectionPolicy)=>Promise<void>}){
  const [draft,setDraft]=useState(data.settings),[working,setWorking]=useState(false),[notice,setNotice]=useState(''),[error,setError]=useState(false);
  const [name,setName]=useState(''),[url,setURL]=useState(''),[budget,setBudget]=useState(data.policy);
  const dirty=JSON.stringify(draft)!==JSON.stringify(data.settings)||!!name||!!url||budget.screenEnabled!==data.policy.screenEnabled||budget.minValue!==data.policy.minValue||budget.deepLimit!==data.policy.deepLimit;
@@ -20,6 +20,6 @@ export default function FeedSettings({data,locked,request,refresh,savePolicy,dis
  <details className="settings-section"><summary>分析服务与用量</summary>
  <p className="feed-help">{data.services.model?'分析模型配置已填写':'分析模型未配置'}；{data.screening?.configured?`Jev 配置已填写（${data.screening.model}）`:'Jev 未配置'}。配置存在不代表每次调用成功。</p><button className="feed-secondary" disabled={disabled||!data.screening?.configured} onClick={()=>void act(async()=>{const r=await request('/screening/check','POST',{});await refresh();setNotice(r.message||'连接检查已完成。');})}>检查 Jev 连接</button><p className="feed-help">连接检查只发送自编短文，会产生一次初筛调用。</p>
  <details><summary>控制 AI 用量</summary><label className="feed-check"><input type="checkbox" checked={budget.screenEnabled} disabled={disabled} onChange={e=>setBudget({...budget,screenEnabled:e.target.checked})}/>先用 Jev 判断文章是否值得分析</label><label className="feed-field">文章阅读价值最低分（0–100）<input name="minValue" type="number" min={0} max={100} value={budget.minValue} disabled={disabled} onChange={e=>setBudget({...budget,minValue:Number(e.target.value)})}/></label><p className="feed-help">先筛选，再由分析模型整理。降低阅读价值最低分会保留更多资讯，也可能增加模型用量。</p><button className="feed-secondary" disabled={disabled} onClick={()=>void act(async()=>{await savePolicy({...data.policy,screenEnabled:budget.screenEnabled,minValue:budget.minValue,deepLimit:budget.deepLimit});setNotice('AI 用量设置已保存。');})}>保存 AI 用量设置</button>{data.usage?.map(u=><p className="feed-help" key={u.stage+u.model}>{modelUsageLabel(u.stage)}：{u.calls} 次，输入 {u.promptTokens??'未知'} / 输出 {u.completionTokens??'未知'} Tokens；{u.unknownCalls} 次未返回用量。</p>)}</details></details>
- <p className="feed-help">偏好会影响此私人站点后续生成的报告与推送。第一版尚未实现多用户独立设置。</p><button className="feed-text" disabled={disabled} onClick={disconnect}>退出连接</button>
+ <p className="feed-help">偏好会影响此私人站点后续生成的报告与推送。第一版尚未实现多用户独立设置。</p>
  </div>;
 }

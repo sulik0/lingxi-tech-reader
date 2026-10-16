@@ -56,4 +56,4 @@ Jev 只判断是否值得继续阅读，不生成报告，也不核实事实。�
 - `POST /api/automation/policy/parse` 接收 `{instruction}`，只返回解析后的关键词和方法。
 - `PATCH /api/automation/policy` 保存完整对象：`instruction`、`include`、`exclude`、`screenEnabled`、`minValue`、`deepLimit`。关注和排除各最多 20 个词，每个最多 60 字，输入句子最多 500 字。
 
-接口继续要求管理口令，写请求要求同源；保存规则与后台任务共用任务锁。D1 新增 `collection_policy`、`article_screenings`、`model_usage` 三张表，不修改旧文章、推送配置或历史报告。
+接口沿用私人站点的访问限制，写请求要求同源；保存规则与后台任务共用任务锁。D1 新增 `collection_policy`、`article_screenings`、`model_usage` 三张表，不修改旧文章、推送配置或历史报告。

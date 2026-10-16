@@ -5,7 +5,6 @@ export type AutomationEnv = AnalysisEnv & {
   JEV_MODEL?:string;
   DB?: D1Database;
   SITES_PRIVATE_AUTOMATION?: string;
-  AUTOMATION_TOKEN?: string;
   FEED_ALLOWED_HOSTS?: string;
   RESEND_API_KEY?: string;
   EMAIL_FROM?: string;

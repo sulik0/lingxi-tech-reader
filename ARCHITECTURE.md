@@ -66,7 +66,7 @@ flowchart TD
 | fast-xml-parser | 解析 RSS/Atom，配合大小限制和实体检查处理不可信内容。 |
 | Jev 的 System One HTTP API | Score 判断阅读价值，Choice 判断归类，Noul 判断片段价值与新增信息；不生成文本。 |
 | Chat Completions 与 JSON mode | 通过兼容接口调用模型；当前用户指定 DeepSeek Flash。 |
-| 页面内存 | 只保留本次管理口令与操作状态，报告和设置从 D1 读取。 |
+| 页面内存 | 只保留本次操作状态，报告和设置从 D1 读取。 |
 | localStorage | 收藏只保存事件与成员文章 ID，用于当前浏览器恢复，不同步到服务端。 |
 | Node.js 测试、SQLite、GitHub Actions | 检查实际 SQL、模型结果规则与重复任务行为，并验证构建。 |
 

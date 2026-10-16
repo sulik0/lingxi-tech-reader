@@ -8,20 +8,22 @@ import { feedURL } from './feeds.ts';
 import { channelReady } from './delivery.ts';
 import { runAutomation, sendReport } from './runner.ts';
 import { AutomationError, suggestedFeeds, validateSettings, type AutomationEnv } from './types.ts';
-async function authorized(request:Request,token:string) {
-  const supplied=request.headers.get('authorization')?.replace(/^Bearer /,'')||'';
-  const digest=async(value:string)=>new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value)));
-  const [a,b]=await Promise.all([digest(supplied),digest(token)]);let diff=0;for(let i=0;i<a.length;i++)diff|=a[i]^b[i];return diff===0;
-}
 export async function handleAutomation(request:Request,env:AutomationEnv) {
   const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{'Cache-Control':'private, no-store'}});
   try{
-    // Sites dispatch authenticates this owner-private service endpoint before the Worker.
-    // Keep the flag disabled on any deployment without that platform boundary.
     const incomingURL=new URL(request.url);
-    if(incomingURL.pathname==='/api/automation/tick'&&request.method==='POST'&&env.SITES_PRIVATE_AUTOMATION==='1'&&incomingURL.hostname.endsWith('.chatgpt.site'))return json(await runAutomation(env,'scheduled'));
-    if(!env.DB||!env.AUTOMATION_TOKEN||env.AUTOMATION_TOKEN.length<24)throw new AutomationError('自动订阅尚未配置。请先设置后台数据库和至少 24 位的管理口令。',503);
-    if(!await authorized(request,env.AUTOMATION_TOKEN))throw new AutomationError('请输入正确的管理口令。',401);
+    // Hosted requests have already passed the owner-private Sites access policy.
+    // Self-hosting must supply its own access boundary; a hostname alone is not enough.
+    const privateSite=env.SITES_PRIVATE_AUTOMATION==='1'&&incomingURL.hostname.endsWith('.chatgpt.site');
+    const local=['localhost','127.0.0.1','[::1]'].includes(incomingURL.hostname);
+    if(!privateSite&&!local)throw new AutomationError('此服务仅支持私人 Sites 站点或本机访问。',401);
+    if(!env.DB)throw new AutomationError('自动订阅尚未配置。请先设置后台数据库。',503);
+    if(incomingURL.pathname==='/api/automation/tick'&&request.method==='POST'){
+      if(!privateSite)throw new AutomationError('云端任务仅供私人 Sites 站点使用。',401);
+      const origin=request.headers.get('origin');
+      if(origin&&origin!==incomingURL.origin)throw new AutomationError('请从同一地址的工作台操作。',403);
+      return json(await runAutomation(env,'scheduled'));
+    }
     const url=new URL(request.url);const path=url.pathname.replace('/api/automation','');
     const store=new AutomationStore(env.DB);
     if(request.method==='GET'&&path==='/progress'){
